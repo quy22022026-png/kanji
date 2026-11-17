@@ -1,0 +1,14 @@
+{
+  "name": "Neko Japanese",
+  "short_name": "Neko Japanese",
+  "description": "Học tiếng Nhật từ nhập môn đến N3",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fff9fc",
+  "theme_color": "#fff8fb",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icons/neko-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/neko-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
