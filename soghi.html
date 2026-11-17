@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#176b3a">
+  <meta name="description" content="Sổ ghi sản lượng công hái">
+  <title>Sổ Ghi Công Hái</title>
+  <link rel="manifest" href="soghi.webmanifest">
+  <link rel="icon" href="soghi-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="soghi-icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="soghi.css">
+  <script src="soghi-config.js"></script>
+  <script defer src="soghi-ledger.js"></script>
+  <script defer src="soghi-sync.js"></script>
+  <script defer src="soghi-ui.js"></script>
+  <script defer src="soghi.js"></script>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <div class="boot-screen">
+      <div class="boot-mark">SG</div>
+      <p>Đang mở sổ ghi...</p>
+    </div>
+  </div>
+
+  <div id="soghi-picker-backdrop" class="soghi-picker-backdrop" hidden></div>
+  <section id="soghi-person-picker" class="soghi-person-picker" aria-label="Chuyển người hái" hidden>
+    <div class="person-picker-heading"><strong>Chuyển người</strong><button type="button" id="close-person-picker" aria-label="Đóng danh sách người">×</button></div>
+    <div class="person-picker-search"><input id="person-picker-search" type="search" placeholder="Tìm tên người hái…" aria-label="Tìm người để chuyển sổ" autocomplete="off"></div>
+    <div id="person-picker-list" class="person-picker-list"></div>
+  </section>
+  <dialog id="soghi-modal" class="soghi-modal" aria-labelledby="soghi-modal-title">
+    <form method="dialog" id="soghi-modal-form" class="modal-card">
+      <div class="modal-heading">
+        <h2 id="soghi-modal-title">Thông tin</h2>
+        <button type="button" class="icon-button modal-close" aria-label="Đóng">×</button>
+      </div>
+      <div id="soghi-modal-body" class="modal-body"></div>
+      <div id="soghi-modal-actions" class="modal-actions"></div>
+    </form>
+  </dialog>
+
+  <div id="soghi-entry-dock" class="soghi-entry-dock" hidden>
+    <button id="soghi-keyboard-toggle" class="soghi-pencil-button" type="button"
+      aria-label="Mở bàn phím nhập kg" aria-expanded="false">✎</button>
+  </div>
+  <section id="soghi-virtual-keyboard" class="soghi-virtual-keyboard" aria-label="Bàn phím nhập số" hidden>
+    <div class="soghi-keyboard-tools">
+      <span id="soghi-entry-mode">Số mới · ENTER để lưu</span>
+      <button type="button" id="soghi-cancel-entry" hidden>Hủy nhập</button>
+      <button type="button" id="soghi-delete-entry" class="delete-entry" hidden>Xóa số</button>
+    </div>
+    <div class="soghi-display-row">
+      <span id="soghi-live-summary" class="soghi-live-summary"></span>
+      <div id="soghi-kg-display" class="soghi-kg-display">Chưa nhập</div>
+    </div>
+    <div class="soghi-keyboard-grid">
+      <button type="button" data-key="1">1</button>
+      <button type="button" data-key="2">2</button>
+      <button type="button" data-key="3">3</button>
+      <button type="button" data-key="4">4</button>
+      <button type="button" data-key="5">5</button>
+      <button type="button" data-key="6">6</button>
+      <button type="button" data-key="7">7</button>
+      <button type="button" data-key="8">8</button>
+      <button type="button" data-key="9">9</button>
+      <button type="button" class="key-function" data-key="decimal">,</button>
+      <button type="button" data-key="0">0</button>
+      <button type="button" class="key-function" data-key="backspace" aria-label="Xóa một ký tự">⌫</button>
+      <button type="button" class="key-enter" data-key="enter">ENTER ↵</button>
+    </div>
+  </section>
+  <input id="soghi-import-file" type="file" accept="application/json,.json" hidden>
+  <div id="soghi-toast" class="soghi-toast" role="status" aria-live="polite"></div>
+</body>
+</html>
