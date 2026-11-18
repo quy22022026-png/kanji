@@ -31,6 +31,8 @@
   const state = {
     mode: 'flashcard', // 'flashcard' | 'matching' | 'kana' | 'data'
     datasetTitle: '',
+    datasetMeta: {},
+    datasetVersion: 0,
     words: [],
     wordMap: new Map(),
     progress: {
@@ -61,10 +63,34 @@
     matchSelected: null,
     matchMatchedIds: new Set(),
     matchLocked: false,
+    matchErrors: null,
     pendingImport: null
   };
 
   const $ = (id) => document.getElementById(id);
+  let cardMoveTimer = null;
+  let matchErrorTimer = null;
+  let datasetBusy = false;
+
+  function shuffled(items) {
+    const result = [...items];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  }
+
+  async function withDatasetLock(action) {
+    if (datasetBusy) {
+      showToast('Đang xử lý dữ liệu, vui lòng chờ hoàn tất.');
+      return;
+    }
+    datasetBusy = true;
+    try { await action(); }
+    catch (err) { showToast(err.message, 'error'); }
+    finally { datasetBusy = false; }
+  }
 
   // ---------- Safe Storage ----------
   function safeGetLS(key, fallback = null) {
@@ -79,7 +105,8 @@
   function safeSetLS(key, value) {
     try {
       localStorage.setItem(key, JSON.stringify(value));
-    } catch { /* ignore */ }
+      return true;
+    } catch { return false; }
   }
 
   function openIDB() {
@@ -94,47 +121,68 @@
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('Bộ nhớ đang bị chặn bởi một tab khác.'));
     });
   }
 
   async function saveDatasetToIDB(payload, key = 'active_dataset') {
+    const storedPayload = { ...payload, _storedAt: Date.now() };
+    let db;
     try {
-      const db = await openIDB();
+      db = await openIDB();
       await new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).put(payload, key);
+        tx.objectStore(IDB_STORE).put(storedPayload, key);
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Giao dịch lưu bị hủy.'));
       });
+      if (key === 'active_dataset') {
+        try { localStorage.removeItem('jlpt_vocab_dataset_fallback'); } catch {}
+      }
+      return true;
     } catch {
-      if (key === 'active_dataset') safeSetLS('jlpt_vocab_dataset_fallback', payload);
-    }
+      return key === 'active_dataset' && safeSetLS('jlpt_vocab_dataset_fallback', storedPayload);
+    } finally { if (db) db.close(); }
   }
 
   async function loadDatasetFromIDB(key = 'active_dataset') {
+    const fallback = key === 'active_dataset' ? safeGetLS('jlpt_vocab_dataset_fallback', null) : null;
+    let db;
     try {
-      const db = await openIDB();
+      db = await openIDB();
       const data = await new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readonly');
         const req = tx.objectStore(IDB_STORE).get(key);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
+        tx.onabort = () => reject(tx.error || new Error('Giao dịch đọc bị hủy.'));
       });
-      if (data) return data;
+      if (data) {
+        // A failed IDB write can leave an older active dataset behind. Prefer the newer fallback.
+        return fallback?._storedAt && Number(fallback._storedAt) >= Number(data._storedAt || 0) ? fallback : data;
+      }
     } catch { /* fallback */ }
-    return key === 'active_dataset' ? safeGetLS('jlpt_vocab_dataset_fallback', null) : null;
+    finally { if (db) db.close(); }
+    return fallback;
   }
 
   async function clearDatasetIDB() {
+    let db;
     try {
-      const db = await openIDB();
-      await new Promise((resolve) => {
+      // When IndexedDB is unavailable, only the localStorage fallback can exist.
+      if (window.indexedDB) db = await openIDB();
+      if (db) {
+      await new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
         tx.objectStore(IDB_STORE).delete('active_dataset');
+        tx.objectStore(IDB_STORE).delete('openjlpt_raw');
         tx.oncomplete = resolve;
-        tx.onerror = resolve;
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Không xóa được bộ nhớ.'));
       });
-    } catch { /* ignore */ }
+      }
+    } finally { if (db) db.close(); }
     try { localStorage.removeItem('jlpt_vocab_dataset_fallback'); } catch {}
   }
 
@@ -148,7 +196,9 @@
     const el = document.createElement('div');
     el.className = `${colors[type] || colors.info} px-4 py-2.5 rounded-2xl text-xs font-extrabold shadow-lg animate-pop max-w-[90vw] text-center`;
     el.textContent = message;
-    $('toastContainer').appendChild(el);
+    const container = $('toastContainer');
+    if (container.children.length >= 3) container.firstElementChild.remove();
+    container.appendChild(el);
     setTimeout(() => {
       el.style.opacity = '0';
       el.style.transition = 'opacity 0.25s';
@@ -156,20 +206,62 @@
     }, 2600);
   }
 
+  let modalPreviousFocus = null;
+  let confirmCleanup = null;
+
+  function openModal(id) {
+    modalPreviousFocus = document.activeElement;
+    $(id).classList.remove('hidden');
+    document.querySelectorAll('header, main, footer').forEach(el => { el.inert = true; });
+    document.body.style.overflow = 'hidden';
+    $(id).querySelector('button, input, select')?.focus();
+  }
+
+  function closeModal(id) {
+    $(id).classList.add('hidden');
+    document.querySelectorAll('header, main, footer').forEach(el => { el.inert = false; });
+    document.body.style.overflow = '';
+    modalPreviousFocus?.focus();
+  }
+
   function showConfirm(title, message) {
-    return new Promise((resolve) => {
+    if (confirmCleanup) confirmCleanup(false);
+    return new Promise(resolve => {
       $('confirmTitle').textContent = title;
       $('confirmMessage').textContent = message;
-      $('confirmModal').classList.remove('hidden');
-
-      const cleanup = (result) => {
-        $('confirmModal').classList.add('hidden');
+      const cleanup = result => {
+        closeModal('confirmModal');
         $('confirmOkBtn').onclick = null;
         $('confirmCancelBtn').onclick = null;
+        confirmCleanup = null;
         resolve(result);
       };
+      confirmCleanup = cleanup;
       $('confirmOkBtn').onclick = () => cleanup(true);
       $('confirmCancelBtn').onclick = () => cleanup(false);
+      openModal('confirmModal');
+    });
+  }
+
+  document.addEventListener('keydown', event => {
+    const modal = ['confirmModal', 'audioModal'].map($).find(el => !el.classList.contains('hidden'));
+    if (!modal) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (modal.id === 'confirmModal') confirmCleanup?.(false);
+      else closeModal(modal.id);
+    } else if (event.key === 'Tab') {
+      const controls = [...modal.querySelectorAll('button, input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled);
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+  });
+  for (const id of ['audioModal', 'confirmModal']) {
+    $(id).addEventListener('click', event => {
+      if (event.target !== $(id)) return;
+      if (id === 'confirmModal') confirmCleanup?.(false);
+      else closeModal(id);
     });
   }
 
@@ -225,13 +317,13 @@
     marineZtm: 'https://tts-models.zenryoku.work/v1.3.0/marine.ztm',
     g2pBin: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models/g2p/g2p.bin',
     g2pJson: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models/g2p/g2p.json',
-    cpuWasm: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/cpu/tts-cpu.wasm',
-    runtimeEsm: 'https://esm.sh/gh/zenryokukikai/zen-tts@v1.3.0'
+    cpuWasm: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/cpu/tts-cpu.wasm'
   };
 
   let zenInstance = null;
-  let zenWavBlobFn = null;
-  let zenLoading = false;
+  let zenLoadPromise = null;
+  let audioRequest = 0;
+  let synthesisQueue = Promise.resolve();
   let currentAudioEl = null;
   const zenWavCache = new Map();
 
@@ -253,145 +345,207 @@
     if (modalText) modalText.textContent = label;
   }
 
-  async function cacheAndFetch(cache, url) {
-    const cached = await cache.match(url);
-    if (cached) return cached;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} khi tải ${url}`);
-    await cache.put(url, resp.clone());
-    return resp;
+  async function fetchWithTimeout(url, options = {}, timeout = 45000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      if ([204, 205, 304].includes(response.status)) return response;
+      // Keep the timeout active through the body download, not just response headers.
+      return new Response(await response.arrayBuffer(), {
+        status: response.status, statusText: response.statusText, headers: response.headers
+      });
+    }
+    catch (err) {
+      if (err.name === 'AbortError') throw new Error('Quá thời gian kết nối. Hãy kiểm tra mạng rồi thử lại.');
+      throw err;
+    } finally { clearTimeout(timer); }
   }
 
-  async function initZenTtsFromCacheOrNetwork(autoDownload = false) {
-    if (zenInstance) return zenInstance;
-    if (zenLoading) return null;
-    zenLoading = true;
-    try {
-      const cache = await caches.open(ZEN_CACHE_NAME);
-      if (!autoDownload) {
-        const hasMarine = await cache.match(ZEN_REMOTE_FILES.marineZtm);
-        if (!hasMarine) {
-          updateZenStatusUI(false, 'Chưa nạp');
-          return null;
-        }
-      }
+  async function openZenCache() {
+    try { return window.caches ? await caches.open(ZEN_CACHE_NAME) : null; }
+    catch { return null; }
+  }
 
-      updateZenStatusUI(false, 'Đang tải Marine...');
-      const detailEl = $('zenDownloadDetail');
-      if (detailEl) detailEl.textContent = 'Đang tải g2p.bin, tts-cpu.wasm và marine.ztm (~41 MB)...';
+  function clearWavCache() {
+    for (const url of zenWavCache.values()) URL.revokeObjectURL(url);
+    zenWavCache.clear();
+  }
 
-      const [marineRes, g2pBinRes, g2pJsonRes, wasmRes] = await Promise.all([
-        cacheAndFetch(cache, ZEN_REMOTE_FILES.marineZtm),
-        cacheAndFetch(cache, ZEN_REMOTE_FILES.g2pBin),
-        cacheAndFetch(cache, ZEN_REMOTE_FILES.g2pJson),
-        cacheAndFetch(cache, ZEN_REMOTE_FILES.cpuWasm)
-      ]);
-
-      const marineBlobUrl = URL.createObjectURL(await marineRes.blob());
-      const wasmBlobUrl = URL.createObjectURL(await wasmRes.blob());
-      const g2pBinBlobUrl = URL.createObjectURL(await g2pBinRes.blob());
-      const g2pJsonBlobUrl = URL.createObjectURL(await g2pJsonRes.blob());
-
-      // Intercept fetch calls inside ZenTts.load for g2p/g2p.bin and g2p/g2p.json so virtual blob URLs work seamlessly
-      const origFetch = window.fetch.bind(window);
-      window.fetch = (input, init) => {
-        const u = typeof input === 'string' ? input : (input && input.url) || '';
-        if (u.endsWith('/g2p/g2p.bin')) return origFetch(g2pBinBlobUrl, init);
-        if (u.endsWith('/g2p/g2p.json')) return origFetch(g2pJsonBlobUrl, init);
-        return origFetch(input, init);
-      };
-
-      const mod = await import(ZEN_REMOTE_FILES.runtimeEsm);
-      const ZenTts = mod.ZenTts;
-      zenWavBlobFn = mod.wavBlob;
-
-      zenInstance = await ZenTts.load({
-        modelsUrl: `${location.origin}/zen-virtual-models`,
-        cpuWasmUrl: wasmBlobUrl,
-        model: marineBlobUrl
-      });
-
-      window.fetch = origFetch;
-      const backendTag = (zenInstance.backend || 'WASM').toUpperCase();
-      updateZenStatusUI(true, `Sẵn sàng (${backendTag})`);
-      if (detailEl) detailEl.textContent = `✅ Đã nạp ZEN-TTS Marine v1.3.0 (${backendTag}) vào Cache trình duyệt!`;
-      showToast(`Đã kích hoạt ZEN-TTS Marine (${backendTag})!`, 'success');
-      return zenInstance;
-    } catch (err) {
-      updateZenStatusUI(false, 'Lỗi nạp Marine');
-      const detailEl = $('zenDownloadDetail');
-      if (detailEl) detailEl.textContent = `Không tải được tự động (${err.message}). Hãy thử nạp từ thư mục đã tải sẵn.`;
-      showToast('Không thể tải ZEN-TTS Marine: ' + err.message, 'error');
-      return null;
-    } finally {
-      zenLoading = false;
+  function stopAudio() {
+    audioRequest++;
+    if (currentAudioEl) {
+      currentAudioEl.pause();
+      currentAudioEl.removeAttribute('src');
+      currentAudioEl.load();
+      currentAudioEl = null;
     }
+  }
+
+  async function createZenEngine(options, responses) {
+    const assets = await Promise.all([...responses].map(async ([url, response]) => ({
+      url, body: await response.clone().arrayBuffer(), headers: [...response.headers]
+    })));
+    const worker = new Worker(new URL('./zen-worker.js', document.baseURI), { type: 'module' });
+    const pending = new Map();
+    let sequence = 0;
+    let terminated = false;
+    const destroy = (message = 'Phiên giọng đọc đã kết thúc. Hãy nạp lại Marine.') => {
+      if (terminated) return;
+      terminated = true;
+      worker.terminate();
+      for (const request of pending.values()) {
+        clearTimeout(request.timer);
+        request.reject(new Error(message));
+      }
+      pending.clear();
+    };
+    worker.onmessage = ({ data }) => {
+      const request = pending.get(data.id);
+      if (!request) return;
+      pending.delete(data.id);
+      clearTimeout(request.timer);
+      if (data.error) request.reject(new Error(data.error));
+      else request.resolve(data.result);
+    };
+    worker.onerror = event => { event.preventDefault(); destroy('Lỗi khởi chạy giọng đọc: ' + event.message); };
+    const ask = (type, data, transfer = []) => new Promise((resolve, reject) => {
+      if (terminated) { reject(new Error('Giọng đọc đã dừng. Hãy tải lại trang hoặc nạp lại Marine.')); return; }
+      const id = ++sequence;
+      const timer = setTimeout(() => { destroy('Giọng đọc quá thời gian xử lý. Hãy tải lại trang rồi thử lại.'); }, 120000);
+      pending.set(id, { resolve, reject, timer });
+      try { worker.postMessage({ id, type, ...data }, transfer); }
+      catch (error) { clearTimeout(timer); pending.delete(id); reject(error); }
+    });
+    try {
+      const result = await ask('load', { options, assets }, assets.map(asset => asset.body));
+      return { backend: result.backend, destroy, isAlive: () => !terminated,
+        speak: (text, speechOptions) => ask('speak', { text, options: speechOptions }) };
+    } catch (error) { destroy(); throw error; }
+  }
+
+  async function initZenTtsFromCacheOrNetwork(autoDownload = false, localResponses = null) {
+    if (location.protocol === 'file:') {
+      if (autoDownload || localResponses) showToast('Hãy mở app qua GitHub Pages (HTTPS) hoặc http://localhost để nạp giọng đọc.', 'error');
+      return null;
+    }
+    if (zenLoadPromise) return zenLoadPromise;
+    if (zenInstance && !zenInstance.isAlive()) {
+      zenInstance = null;
+      clearWavCache();
+      updateZenStatusUI(false, 'Cần nạp lại Marine');
+    }
+    if (zenInstance && !localResponses) return zenInstance;
+    zenLoadPromise = (async () => {
+      const detail = $('zenDownloadDetail');
+      const buttons = [$('btnDownloadZenMarine'), $('btnModalDownloadZen')];
+      let newInstance = null;
+      try {
+        const cache = await openZenCache();
+        const urls = ['marineZtm', 'g2pBin', 'g2pJson', 'cpuWasm'].map(key => ZEN_REMOTE_FILES[key]);
+        const responses = new Map(localResponses || []);
+        if (!localResponses) {
+          for (const url of urls) {
+            const saved = cache && await cache.match(url);
+            if (saved) responses.set(url, saved);
+          }
+          if (!autoDownload && responses.size !== urls.length) {
+            updateZenStatusUI(false, 'Chưa nạp');
+            return null;
+          }
+        }
+        buttons.forEach(button => { button.disabled = true; });
+        updateZenStatusUI(false, 'Đang nạp Marine...');
+        detail.textContent = 'Đang nạp giọng Marine, G2P và WASM. Lần tải đầu có thể mất vài phút.';
+        await Promise.all(urls.map(async url => {
+          if (responses.has(url)) return;
+          const response = await fetchWithTimeout(url, {}, 120000);
+          if (!response.ok) throw new Error(`Không tải được ${url.split('/').pop()} (HTTP ${response.status}).`);
+          // Consume the body now so the runtime can reuse a complete response.
+          responses.set(url, new Response(await response.arrayBuffer(), { headers: response.headers }));
+        }));
+        const options = {
+          modelsUrl: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models',
+          cpuWasmUrl: ZEN_REMOTE_FILES.cpuWasm,
+          model: ZEN_REMOTE_FILES.marineZtm
+        };
+        newInstance = await createZenEngine(options, responses);
+        stopAudio();
+        if (zenInstance) zenInstance.destroy();
+        zenInstance = newInstance;
+        clearWavCache();
+        let persisted = !!cache;
+        if (cache) {
+          try { for (const [url, response] of responses) await cache.put(url, response.clone()); }
+          catch { persisted = false; }
+        }
+        const backend = zenInstance.backend.toUpperCase();
+        updateZenStatusUI(true, `Sẵn sàng (${backend})`);
+        detail.textContent = persisted
+          ? `✅ Đã nạp Marine v1.3.0 (${backend}) và lưu mô hình trong trình duyệt.`
+          : `✅ Marine đang sẵn sàng (${backend}). Không lưu được Cache; cần nạp lại khi mở trang.`;
+        if (autoDownload || localResponses) showToast('Đã kích hoạt ZEN-TTS Marine!', 'success');
+        return zenInstance;
+      } catch (err) {
+        updateZenStatusUI(!!zenInstance, zenInstance ? 'Đang dùng mô hình trước' : 'Lỗi nạp Marine');
+        detail.textContent = `Không nạp được Marine: ${err.message} Có thể thử lại hoặc chọn thư mục đủ 4 tệp.`;
+        if (autoDownload || localResponses) showToast('Không nạp được Marine: ' + err.message, 'error');
+        return null;
+      } finally {
+        buttons.forEach(button => { button.disabled = false; });
+      }
+    })();
+    try { return await zenLoadPromise; }
+    finally { zenLoadPromise = null; }
   }
 
   async function initZenTtsFromLocalFiles(fileList) {
+    if (zenLoadPromise) { showToast('Đang nạp giọng đọc. Vui lòng chờ.'); return; }
     const files = Array.from(fileList || []);
-    const findFile = (suffix) => files.find(f => f.name === suffix || (f.webkitRelativePath && f.webkitRelativePath.endsWith(suffix)));
-    const marineFile = findFile('marine.ztm');
-    const g2pBinFile = findFile('g2p.bin');
-    const g2pJsonFile = findFile('g2p.json');
-    const wasmFile = findFile('tts-cpu.wasm');
-
-    if (!marineFile || !g2pBinFile || !wasmFile) {
-      showToast('Thư mục thiếu marine.ztm, g2p.bin hoặc tts-cpu.wasm.', 'error');
-      return;
+    const responses = new Map();
+    const names = { marineZtm: 'marine.ztm', g2pBin: 'g2p.bin', g2pJson: 'g2p.json', cpuWasm: 'tts-cpu.wasm' };
+    for (const [key, name] of Object.entries(names)) {
+      const file = files.find(file => file.name === name);
+      if (!file) { showToast('Thư mục thiếu tệp bắt buộc: ' + name, 'error'); return; }
+      responses.set(ZEN_REMOTE_FILES[key], new Response(file));
     }
-    try {
-      const cache = await caches.open(ZEN_CACHE_NAME);
-      await cache.put(ZEN_REMOTE_FILES.marineZtm, new Response(marineFile));
-      await cache.put(ZEN_REMOTE_FILES.g2pBin, new Response(g2pBinFile));
-      if (g2pJsonFile) await cache.put(ZEN_REMOTE_FILES.g2pJson, new Response(g2pJsonFile));
-      await cache.put(ZEN_REMOTE_FILES.cpuWasm, new Response(wasmFile));
-      zenInstance = null;
-      await initZenTtsFromCacheOrNetwork(false);
-    } catch (err) {
-      showToast('Lỗi đọc thư mục Marine: ' + err.message, 'error');
-    }
+    return initZenTtsFromCacheOrNetwork(false, responses);
   }
 
-  async function speakWithZenMarine(text) {
+  async function speakWithZenMarine(text, prefs = state.prefs) {
     if (!text) return;
-    const happy = Number(state.prefs.zenHappy) || 60;
-    const neutral = Math.max(0, 100 - happy);
-    const speed = Number(state.prefs.zenSpeed) || 1.0;
-    const pitch = Number(state.prefs.zenPitch) || 0;
-    const cacheKey = `${speed}:${pitch}:${happy}:${text}`;
-
-    if (zenWavCache.has(cacheKey)) {
-      try {
-        if (currentAudioEl) currentAudioEl.pause();
-        const a = new Audio(zenWavCache.get(cacheKey));
-        currentAudioEl = a;
-        await a.play();
-        return;
-      } catch { /* fallback */ }
-    }
-
+    stopAudio();
+    const request = audioRequest;
     if (!zenInstance) {
-      showToast('Hãy nạp mô-đun ZEN-TTS Marine v1.3.0 trong mục 📦 Mô-đun hoặc 🎧 trước nhé!', 'info');
+      showToast(zenLoadPromise ? 'Giọng đọc đang được nạp. Vui lòng thử lại sau.' : 'Hãy nạp ZEN-TTS Marine trong mục 📦 Mô-đun hoặc 🎧 để nghe.');
       return;
     }
-
+    const { zenHappy: happy, zenSpeed: speed, zenPitch: pitch } = prefs;
+    const cacheKey = `${speed}:${pitch}:${happy}:${text}`;
+    const engine = zenInstance;
     try {
-      const res = await zenInstance.speak(text, {
-        emotion: { happy, neutral },
-        speed,
-        pitch
-      });
-      const blob = zenWavBlobFn(res.audio);
-      const url = URL.createObjectURL(blob);
-      zenWavCache.set(cacheKey, url);
-
-      if (currentAudioEl) currentAudioEl.pause();
-      const audio = new Audio(url);
+      if (!zenWavCache.has(cacheKey)) {
+        const task = synthesisQueue.then(async () => {
+          if (request !== audioRequest || engine !== zenInstance) return;
+          const result = await engine.speak(text, { emotion: { happy, neutral: 100 - happy }, speed, pitch });
+          if (engine !== zenInstance) return;
+          if (zenWavCache.has(cacheKey)) return;
+          if (zenWavCache.size >= 60) {
+            const oldest = zenWavCache.keys().next().value;
+            URL.revokeObjectURL(zenWavCache.get(oldest));
+            zenWavCache.delete(oldest);
+          }
+          zenWavCache.set(cacheKey, URL.createObjectURL(result.wav));
+        });
+        synthesisQueue = task.catch(() => {});
+        await task;
+      }
+      if (request !== audioRequest || !zenWavCache.has(cacheKey)) return;
+      const audio = new Audio(zenWavCache.get(cacheKey));
       currentAudioEl = audio;
       await audio.play();
     } catch (err) {
-      showToast('Lỗi tổng hợp âm thanh ZEN-TTS: ' + err.message, 'error');
+      if (request === audioRequest) showToast('Lỗi âm thanh ZEN-TTS: ' + err.message, 'error');
     }
   }
 
@@ -404,193 +558,209 @@
     speakWithZenMarine(text);
   }
 
-  function speakJapanese(word) {
+  async function speakJapanese(word) {
     if (!word) return;
     if (word.audioUrl) {
+      stopAudio();
+      const request = audioRequest;
       try {
-        if (currentAudioEl) currentAudioEl.pause();
         currentAudioEl = new Audio(word.audioUrl);
-        currentAudioEl.play().catch(() => speakWithZenMarine(word.furigana || word.kanji));
+        await currentAudioEl.play();
         return;
-      } catch { /* fallback */ }
+      } catch {
+        if (request !== audioRequest) return;
+      }
     }
-    speakWithZenMarine(word.furigana || word.kanji);
+    await speakWithZenMarine(word.furigana || word.kanji);
   }
 
   // ---------- OpenJLPT + dreamofi Module Downloader & Merger ----------
-  function normalizeOpenJlptItem(item, fallbackLevel) {
-    const kanji = String(item.word || item.kanji || item.expression || '').trim();
-    const furigana = String(item.reading || item.furigana || kanji).trim();
-    const glosses = Array.isArray(item.glosses) ? item.glosses.join('; ') : String(item.meaning || item.english || '').trim();
-    const level = String(item.level || fallbackLevel || 'N5').toUpperCase();
-    const pos = Array.isArray(item.pos) && item.pos.length ? item.pos[0] : (item.topic || 'Chung');
+  function plainText(value) {
+    return typeof value === 'string' ? value.trim() : '';
+  }
 
-    let exampleObj = null;
-    if (Array.isArray(item.examples) && item.examples.length > 0) {
-      const ex = item.examples[0];
-      exampleObj = {
-        ja: ex.ja || ex.sentence || '',
-        furi: ex.reading || '',
-        vi: ex.en || ex.translation || ''
-      };
-    }
+  function joinedMeanings(value) {
+    return Array.isArray(value) ? value.map(plainText).filter(Boolean).join('; ') : plainText(value);
+  }
 
+  function normalizeExample(ex) {
+    if (!ex || typeof ex !== 'object' || Array.isArray(ex)) return null;
+    const ja = plainText(ex.ja || ex.sentence);
+    if (!ja) return null;
     return {
-      id: String(item.id || `${level.toLowerCase()}_${kanji}_${furigana}`),
-      level: LEVELS.includes(level) ? level : 'N5',
-      topic: String(pos),
-      kanji,
-      furigana,
-      romaji: String(item.romaji || ''),
-      meaning: glosses || kanji,
-      enMeaning: glosses,
-      hanViet: '',
-      example: exampleObj,
-      relatedIds: []
+      ja,
+      furi: plainText(ex.furi || ex.furigana || ex.reading).replace(/\{[^{}|]+\|([^{}]+)\}/g, '$1'),
+      vi: plainText(ex.vi),
+      en: plainText(ex.en || ex.translation)
     };
   }
 
-  async function downloadOpenJLPTFromGitHub() {
-    const checked = Array.from(document.querySelectorAll('.ojlpt-lvl:checked')).map(el => el.value);
-    if (!checked.length) {
-      showToast('Hãy chọn ít nhất 1 cấp độ JLPT để tải!', 'error');
-      return;
+  function normalizeOpenJlptItem(item, fallbackLevel) {
+    return {
+      ...item,
+      level: item.level || fallbackLevel,
+      kanji: item.word || item.kanji || item.expression,
+      furigana: item.reading || item.furigana || item.word || item.kanji,
+      meaning: joinedMeanings(item.meanings || item.glosses || item.meaning || item.english),
+      enMeaning: joinedMeanings(item.meanings || item.glosses || item.english),
+      meaningLang: 'en',
+      topic: item.topic || (Array.isArray(item.pos) && item.pos[0]) || 'Chung',
+      example: normalizeExample(item.example || (Array.isArray(item.examples) && item.examples[0]))
+    };
+  }
+
+  async function fetchFromSources(urls) {
+    let lastError;
+    for (const url of urls) {
+      try {
+        const response = await fetchWithTimeout(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response;
+      } catch (err) { lastError = err; }
     }
-    const badge = $('badgeOpenJLPT');
-    const btn = $('btnDownloadOpenJLPT');
-    badge.textContent = 'Đang tải...';
-    btn.disabled = true;
+    throw lastError;
+  }
 
+  async function downloadOpenJLPTFromGitHub() {
+    const levels = Array.from(document.querySelectorAll('.ojlpt-lvl:checked')).map(el => el.value);
+    if (!levels.length) { showToast('Hãy chọn ít nhất 1 cấp độ JLPT để tải!', 'error'); return; }
+    const button = $('btnDownloadOpenJLPT');
+    button.disabled = true;
+    $('badgeOpenJLPT').textContent = 'Đang tải...';
     try {
-      const allWords = [];
-      for (const lvl of checked) {
-        const url = `https://cdn.jsdelivr.net/gh/evanclan/OpenJLPT@main/data/json/vocab/${lvl}.json`;
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`Không tải được ${lvl}.json (HTTP ${resp.status})`);
-        const raw = await resp.json();
-        const arr = Array.isArray(raw) ? raw : (raw.words || raw.entries || []);
-        arr.forEach(item => allWords.push(normalizeOpenJlptItem(item, lvl.toUpperCase())));
+      const words = [];
+      for (const level of levels) {
+        const path = `data/json/vocab/${level}.json`;
+        const response = await fetchFromSources([
+          `https://cdn.jsdelivr.net/gh/evanclan/OpenJLPT@main/${path}`,
+          `https://raw.githubusercontent.com/evanclan/OpenJLPT/main/${path}`
+        ]);
+        const raw = await response.json();
+        const result = validateVocabJson(raw, level.toUpperCase());
+        if (!result.ok) throw new Error(`${level.toUpperCase()}: ${result.error}`);
+        words.push(...result.dataset.words);
+        $('badgeOpenJLPT').textContent = `${words.length} từ...`;
       }
-
-      const dataset = { meta: { title: 'OpenJLPT (N5–N1)' }, words: allWords };
-      await saveDatasetToIDB(dataset, 'openjlpt_raw');
-      await applyDataset(dataset, true);
-
-      badge.textContent = `${allWords.length} từ`;
-      badge.className = 'text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-matcha-50 text-matcha-600';
-      showToast(`Đã tải ${allWords.length} từ OpenJLPT! Bấm tải Từ điển dreamofi để dịch Việt nhé.`, 'success');
+      await applyDataset({ meta: { title: `OpenJLPT (${levels.map(level => level.toUpperCase()).join(', ')})`, openJLPT: true }, words });
+      showToast(`Đã tải ${state.words.length} từ. Có thể ghép từ điển dreamofi để bổ sung nghĩa Việt.`, 'success');
     } catch (err) {
-      badge.textContent = 'Lỗi tải';
       showToast('Lỗi tải OpenJLPT: ' + err.message, 'error');
     } finally {
-      btn.disabled = false;
+      button.disabled = false;
+      renderModuleBadges();
     }
   }
 
-  async function parseDreamofiZipAndMerge(zipArrayBuffer) {
-    if (!window.JSZip) throw new Error('Thiếu thư viện JSZip');
-    const zip = await window.JSZip.loadAsync(zipArrayBuffer);
-    const termMap = new Map();
-    const kanjiMap = new Map();
+  function normalizeReading(text) {
+    return text.normalize('NFC').replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+  }
 
-    const fileNames = Object.keys(zip.files);
-    for (const fname of fileNames) {
-      if (fname.includes('term_bank_') && fname.endsWith('.json')) {
-        const content = await zip.files[fname].async('string');
-        const entries = JSON.parse(content);
-        for (const row of entries) {
-          // Yomichan term_bank format: [expression, reading, definitionTags, rules, score, glossaryArray, sequence, termTags]
-          const expr = String(row[0] || '').trim();
-          const read = String(row[1] || expr).trim();
-          const glossArr = Array.isArray(row[5]) ? row[5] : [String(row[5] || '')];
-          const viMeanings = glossArr
-            .map(g => (typeof g === 'string' ? g : (g && g.text) || ''))
-            .filter(Boolean)
-            .slice(0, 3)
-            .join('; ');
-          if (!viMeanings) continue;
-          const keyBoth = `${expr}|${read}`;
-          if (!termMap.has(keyBoth)) termMap.set(keyBoth, viMeanings);
-          if (!termMap.has(expr)) termMap.set(expr, viMeanings);
-        }
-      } else if (fname.includes('kanji_bank_') && fname.endsWith('.json')) {
-        const content = await zip.files[fname].async('string');
-        const entries = JSON.parse(content);
-        for (const row of entries) {
-          // Yomichan kanji_bank format: [character, onyomi, kunyomi, tags, meaningsArray, stats]
-          const ch = String(row[0] || '').trim();
-          const meanings = Array.isArray(row[4]) ? row[4].join(', ') : '';
-          if (ch && meanings && !kanjiMap.has(ch)) {
-            kanjiMap.set(ch, meanings);
+  function glossaryText(value) {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return value.map(glossaryText).filter(Boolean).join(' ');
+    if (value && typeof value === 'object') return glossaryText(value.content || value.text || '');
+    return '';
+  }
+
+  function vietnameseGlosses(glossary) {
+    const values = Array.isArray(glossary) ? glossary : [glossary];
+    return values.map(glossaryText).map(text => text.normalize('NFC'))
+      // dreamofi appends Vietnamese AFTER the original English senses and reading tags.
+      .filter(text => /[ăâđêôơưÀ-ỹ]/iu.test(text) && text !== text.toLocaleUpperCase('vi'))
+      .map(text => text.replace(/\\n/g, '\n').replace(/\{[^{}]*\}/g, '').replace(/^[\s,\-]+/, '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  async function readDreamofiZip(buffer, words, maps) {
+    if (!window.JSZip) throw new Error('Không nạp được thư viện đọc ZIP. Hãy tải lại trang.');
+    const zip = await window.JSZip.loadAsync(buffer);
+    const expressions = new Set(words.map(word => word.kanji));
+    const characters = new Set(words.flatMap(word => extractKanjiChars(word.kanji)));
+    const files = Object.values(zip.files).filter(file => !file.dir && /(?:^|\/)(?:term|kanji)_bank_\d+\.json$/.test(file.name));
+    if (!files.length) throw new Error('ZIP không có term_bank hoặc kanji_bank của từ điển Yomichan/Yomitan.');
+    for (const file of files) {
+      const entries = JSON.parse(await file.async('string'));
+      if (!Array.isArray(entries)) throw new Error('Bảng từ điển không hợp lệ: ' + file.name);
+      const terms = /(?:^|\/)term_bank_/.test(file.name);
+      for (const row of entries) {
+        if (!Array.isArray(row)) continue;
+        const expression = plainText(row[0]);
+        if (terms) {
+          if (!expressions.has(expression)) continue;
+          const reading = normalizeReading(plainText(row[1]) || expression);
+          const key = `${expression}|${reading}`;
+          const meanings = maps.terms.get(key) || [];
+          for (const text of vietnameseGlosses(row[5])) {
+            if (!meanings.includes(text) && meanings.length < 3) meanings.push(text);
           }
+          if (meanings.length) maps.terms.set(key, meanings);
+        } else {
+          if (!characters.has(expression)) continue;
+          // This dictionary stores Sino-Vietnamese readings in onyomi, not meaningsArray.
+          const readings = plainText(row[1]).normalize('NFC').split(/\s+/)
+            .filter(text => /^\p{Script=Latin}+$/u.test(text)).map(text => text.toLocaleUpperCase('vi'));
+          if (readings.length) maps.kanji.set(expression, [...new Set(readings)].join('/'));
         }
       }
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
-
-    const targetWords = state.words.length ? state.words : ((await loadDatasetFromIDB('openjlpt_raw'))?.words || []);
-    if (!targetWords.length) {
-      throw new Error('Hãy tải OpenJLPT (Bước 1) trước khi ghép từ điển dreamofi!');
-    }
-
-    let matchedCount = 0;
-    const mergedWords = targetWords.map(w => {
-      const vi = termMap.get(`${w.kanji}|${w.furigana}`) || termMap.get(w.kanji) || termMap.get(w.furigana);
-      let hv = w.hanViet || '';
-      if (!hv && kanjiMap.size > 0) {
-        const ks = extractKanjiChars(w.kanji);
-        const hvParts = ks.map(k => kanjiMap.get(k)).filter(Boolean);
-        if (hvParts.length) hv = hvParts.join(' · ');
-      }
-      if (vi) matchedCount++;
-      return {
-        ...w,
-        meaning: vi || w.meaning,
-        hanViet: hv
-      };
-    });
-
-    const dataset = { meta: { title: 'OpenJLPT × Từ điển Việt dreamofi' }, words: mergedWords };
-    await applyDataset(dataset, true);
-
-    const badge = $('badgeDreamofi');
-    badge.textContent = `Khớp ${matchedCount}/${mergedWords.length}`;
-    badge.className = 'text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-matcha-50 text-matcha-600';
-    showToast(`Đã dịch Việt thành công ${matchedCount}/${mergedWords.length} từ!`, 'success');
   }
+
+  async function mergeDreamofiBuffers(buffers) {
+    if (!state.words.length) throw new Error('Hãy tải hoặc nhập bộ từ vựng trước khi ghép từ điển.');
+    const words = state.words;
+    const version = state.datasetVersion;
+    const maps = { terms: new Map(), kanji: new Map() };
+    for (const buffer of buffers) await readDreamofiZip(buffer, words, maps);
+    if (version !== state.datasetVersion) throw new Error('Bộ từ đã thay đổi. Vui lòng ghép lại từ điển.');
+    let translated = 0, hanVietCount = 0;
+    const merged = words.map(word => {
+      const meanings = maps.terms.get(`${word.kanji}|${normalizeReading(word.furigana)}`)
+        || maps.terms.get(`${word.kanji}|${normalizeReading(word.kanji)}`);
+      const parts = extractKanjiChars(word.kanji).map(ch => maps.kanji.get(ch));
+      const hv = parts.length && parts.every(Boolean) ? parts.join(' · ') : '';
+      if (meanings) translated++;
+      if (hv) hanVietCount++;
+      return { ...word, meaning: meanings ? meanings.join('; ') : word.meaning,
+        meaningLang: meanings ? 'vi' : word.meaningLang, hanViet: hv || word.hanViet };
+    });
+    if (!translated && !hanVietCount) throw new Error('Không khớp nghĩa Việt hoặc âm Hán Việt nào. Bộ từ hiện tại được giữ nguyên.');
+    await applyDataset({ meta: { ...state.datasetMeta, dreamofi: true,
+      title: state.datasetTitle.includes('dreamofi') ? state.datasetTitle : `${state.datasetTitle} × dreamofi` }, words: merged });
+    showToast(`Đã bổ sung nghĩa Việt: ${translated} từ; âm Hán Việt: ${hanVietCount} từ.`, 'success');
+  }
+
+  async function parseDreamofiZipAndMerge(buffer) { return mergeDreamofiBuffers([buffer]); }
 
   async function downloadDreamofiFromGitHub() {
-    const badge = $('badgeDreamofi');
-    const btn = $('btnDownloadDreamofi');
-    badge.textContent = 'Đang tải...';
-    btn.disabled = true;
-
+    if (!state.words.length) { showToast('Hãy tải hoặc nhập từ vựng trước khi ghép từ điển.', 'error'); return; }
+    const button = $('btnDownloadDreamofi');
+    button.disabled = true;
+    $('badgeDreamofi').textContent = 'Đang tải...';
     try {
-      const apiResp = await fetch('https://api.github.com/repos/dreamofi/yomichan-Vietnamese-dictionary/contents/vietnameseDict');
-      if (!apiResp.ok) throw new Error('Không truy cập được thư mục vietnameseDict trên GitHub');
-      const items = await apiResp.json();
-      const zipFiles = items.filter(it => it.name && it.name.toLowerCase().endsWith('.zip'));
-      if (!zipFiles.length) throw new Error('Không tìm thấy file .zip trong vietnameseDict');
-
-      // Prefer jmdict zip first, then merge any kanjidic zip if present
-      for (const zf of zipFiles) {
-        const cdnUrl = `https://cdn.jsdelivr.net/gh/dreamofi/yomichan-Vietnamese-dictionary@master/vietnameseDict/${encodeURIComponent(zf.name)}`;
-        const zResp = await fetch(cdnUrl);
-        if (!zResp.ok) continue;
-        const buf = await zResp.arrayBuffer();
-        await parseDreamofiZipAndMerge(buf);
+      const buffers = [];
+      for (const name of ['jmdict_vietnamese.zip', 'kanjidic_vietnamese.zip']) {
+        const response = await fetchFromSources([
+          `https://raw.githubusercontent.com/dreamofi/yomichan-Vietnamese-dictionary/master/vietnameseDict/${name}`,
+          `https://cdn.jsdelivr.net/gh/dreamofi/yomichan-Vietnamese-dictionary@master/vietnameseDict/${name}`
+        ]);
+        buffers.push(await response.arrayBuffer());
       }
-    } catch (err) {
-      badge.textContent = 'Lỗi tải';
-      showToast('Lỗi tải từ điển dreamofi: ' + err.message, 'error');
-    } finally {
-      btn.disabled = false;
-    }
+      await mergeDreamofiBuffers(buffers);
+    } catch (err) { showToast('Lỗi ghép từ điển: ' + err.message, 'error'); }
+    finally { button.disabled = false; renderModuleBadges(); }
+  }
+
+  function renderModuleBadges() {
+    $('badgeOpenJLPT').textContent = state.datasetMeta.openJLPT ? `${state.words.length} từ` : 'Chưa tải';
+    const count = state.words.filter(word => word.meaningLang === 'vi').length;
+    $('badgeDreamofi').textContent = state.datasetMeta.dreamofi ? `Việt: ${count}/${state.words.length}` : 'Chưa ghép';
   }
 
   // ---------- Kanji Cross-Level Linking ----------
   function extractKanjiChars(str) {
     if (!str) return [];
-    const matches = str.match(/[\u4E00-\u9FAF]/g);
+    const matches = str.match(/\p{Script=Han}/gu);
     return matches ? [...new Set(matches)] : [];
   }
 
@@ -617,88 +787,110 @@
   }
 
   // ---------- Schema Validator ----------
-  function validateVocabJson(rawInput) {
+  function validateVocabJson(rawInput, fallbackLevel = '') {
     let parsed;
-    try {
-      parsed = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput;
-    } catch (err) {
-      return { ok: false, error: 'Mã JSON không hợp lệ: ' + err.message };
+    try { parsed = typeof rawInput === 'string' ? JSON.parse(rawInput) : rawInput; }
+    catch (err) { return { ok: false, error: 'Mã JSON không hợp lệ: ' + err.message }; }
+    const list = Array.isArray(parsed) ? parsed : parsed && parsed.words;
+    if (!Array.isArray(list) || !list.length) {
+      return { ok: false, error: 'JSON phải là mảng từ vựng không rỗng hoặc object có "words": [...].' };
     }
-    const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.words) ? parsed.words : null);
-    if (!list || list.length === 0) {
-      return { ok: false, error: 'JSON phải là mảng từ vựng hoặc object có "words": [...].' };
-    }
+    const meta = !Array.isArray(parsed) && parsed.meta && typeof parsed.meta === 'object' ? parsed.meta : {};
     const normalized = [];
-    const seenIds = new Set();
+    const seenIds = new Map();
     const levelCounts = { N5: 0, N4: 0, N3: 0, N2: 0, N1: 0 };
     const topics = new Set();
-
     for (let i = 0; i < list.length; i++) {
-      const item = list[i];
-      if (!item || typeof item !== 'object') continue;
-      if (item.word && Array.isArray(item.glosses)) {
-        const w = normalizeOpenJlptItem(item, 'N5');
-        if (!seenIds.has(w.id)) {
-          seenIds.add(w.id);
-          levelCounts[w.level]++;
-          topics.add(w.topic);
-          normalized.push(w);
+      let item = list[i];
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return { ok: false, error: `Mục #${i + 1} phải là object từ vựng.` };
+      }
+      if (item.word && (Array.isArray(item.meanings) || Array.isArray(item.glosses))) {
+        item = normalizeOpenJlptItem(item, fallbackLevel || meta.level);
+      }
+      const level = String(item.level || fallbackLevel || meta.level || '').trim().toUpperCase();
+      const kanji = plainText(item.kanji || item.word);
+      const furigana = plainText(item.furigana || item.reading);
+      const meaning = plainText(item.meaning);
+      const id = typeof item.id === 'string' || typeof item.id === 'number'
+        ? String(item.id).trim() : `${level.toLowerCase()}_${kanji}_${furigana}`;
+      if (!id || !LEVELS.includes(level) || !kanji || !furigana || !meaning) {
+        return { ok: false, error: `Mục #${i + 1} (${kanji || id}) thiếu hoặc sai kiểu trường bắt buộc (level, kanji, furigana, meaning).` };
+      }
+      const previous = seenIds.get(id);
+      if (previous) {
+        if (previous.kanji !== kanji || previous.furigana !== furigana || previous.level !== level || previous.meaning !== meaning) {
+          return { ok: false, error: `Mục #${i + 1}: ID "${id}" bị trùng với một từ khác. Hãy đặt ID riêng cho mỗi từ.` };
         }
         continue;
       }
-      const id = String(item.id || `w_${i + 1}`).trim();
-      const level = String(item.level || '').toUpperCase().trim();
-      const kanji = String(item.kanji || item.word || '').trim();
-      const furigana = String(item.furigana || item.reading || '').trim();
-      const meaning = String(item.meaning || '').trim();
-      if (!LEVELS.includes(level) || !kanji || !furigana || !meaning) {
-        return { ok: false, error: `Mục #${i + 1} (${kanji || id}) thiếu trường bắt buộc (level, kanji, furigana, meaning).` };
+      const topic = plainText(item.topic) || 'Chung';
+      const audioUrl = plainText(item.audioUrl || item.audio_url);
+      if (audioUrl) {
+        try {
+          if (!['https:', 'http:'].includes(new URL(audioUrl, location.href).protocol)) throw new Error();
+        } catch { return { ok: false, error: `Mục #${i + 1}: audioUrl phải là URL HTTP(S) hoặc đường dẫn tương đối.` }; }
       }
-      if (seenIds.has(id)) continue;
-      seenIds.add(id);
-      const topic = String(item.topic || 'Chung').trim() || 'Chung';
+      const word = {
+        id, level, topic, kanji, furigana, meaning,
+        romaji: plainText(item.romaji),
+        enMeaning: plainText(item.enMeaning),
+        meaningLang: ['en', 'vi'].includes(item.meaningLang) ? item.meaningLang : '',
+        hanViet: plainText(item.hanViet || item.han_viet),
+        example: normalizeExample(item.example),
+        relatedIds: (Array.isArray(item.relatedIds) ? item.relatedIds : Array.isArray(item.related_ids) ? item.related_ids : []).map(plainText).filter(Boolean),
+        audioUrl: audioUrl || null
+      };
+      seenIds.set(id, word);
+      normalized.push(word);
       levelCounts[level]++;
       topics.add(topic);
-      normalized.push({
-        id,
-        level,
-        topic,
-        kanji,
-        furigana,
-        romaji: String(item.romaji || '').trim(),
-        meaning,
-        hanViet: String(item.hanViet || item.han_viet || '').trim(),
-        example: item.example && typeof item.example === 'object' ? item.example : null,
-        relatedIds: Array.isArray(item.relatedIds) ? item.relatedIds : (Array.isArray(item.related_ids) ? item.related_ids : []),
-        audioUrl: item.audioUrl || item.audio_url || null
-      });
     }
-    const title = (parsed.meta && parsed.meta.title) ? String(parsed.meta.title) : `Bộ từ vựng (${normalized.length} từ)`;
+    const title = plainText(meta.title) || `Bộ từ vựng (${normalized.length} từ)`;
     return {
       ok: true,
-      dataset: { meta: { title }, words: normalized },
+      dataset: { meta: { ...meta, title }, words: normalized },
       stats: { total: normalized.length, levelCounts, topicCount: topics.size }
     };
   }
 
   // ---------- Progress & Prefs ----------
   function saveProgress() {
-    safeSetLS(STORAGE_PROGRESS_KEY, {
+    const saved = safeSetLS(STORAGE_PROGRESS_KEY, {
       masteredIds: Array.from(state.progress.masteredIds),
       streak: state.progress.streak,
       bestStreak: state.progress.bestStreak,
       totalPairsMatched: state.progress.totalPairsMatched
     });
+    if (!saved) showToast('Không lưu được tiến độ trên trình duyệt. Hãy xuất file tiến độ trước khi đóng trang.', 'error');
   }
 
   function loadProgress() {
     const p = safeGetLS(STORAGE_PROGRESS_KEY, null);
     if (p) {
-      state.progress.masteredIds = new Set(Array.isArray(p.masteredIds) ? p.masteredIds : []);
-      state.progress.streak = Number(p.streak) || 0;
-      state.progress.bestStreak = Number(p.bestStreak) || 0;
-      state.progress.totalPairsMatched = Number(p.totalPairsMatched) || 0;
+      try { state.progress = normalizeProgress(p); } catch { /* ignore damaged progress */ }
     }
+  }
+
+  function normalizeProgress(p) {
+    if (!p || typeof p !== 'object' || !Array.isArray(p.masteredIds) || p.masteredIds.some(id => typeof id !== 'string' || !id.trim())) {
+      throw new Error('Tiến độ phải có masteredIds là mảng ID từ vựng.');
+    }
+    const numbers = ['streak', 'bestStreak', 'totalPairsMatched'].map(key => {
+      const value = p[key] ?? 0;
+      if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Tiến độ có ${key} không hợp lệ.`);
+      return value;
+    });
+    return { masteredIds: new Set(p.masteredIds), streak: numbers[0], bestStreak: Math.max(numbers[0], numbers[1]), totalPairsMatched: numbers[2] };
+  }
+
+  function refreshStudyProgress() {
+    const id = state.fcDeck[state.fcIndex]?.id;
+    rebuildFlashcardDeck();
+    const index = state.fcDeck.findIndex(word => word.id === id);
+    if (index >= 0) state.fcIndex = index;
+    initMatchingRound();
+    renderAll();
   }
 
   function savePrefs() { safeSetLS(STORAGE_PREFS_KEY, state.prefs); }
@@ -709,30 +901,40 @@
       if (LEVELS.includes(pr.level)) state.prefs.level = pr.level;
       if (typeof pr.topic === 'string') state.prefs.topic = pr.topic;
       if (typeof pr.showFuri === 'boolean') state.prefs.showFuri = pr.showFuri;
+      if (['ALL', 'MASTERED', 'UNMASTERED'].includes(pr.fcFilter)) state.prefs.fcFilter = pr.fcFilter;
       if (typeof pr.matchSwap === 'boolean') state.prefs.matchSwap = pr.matchSwap;
       if (pr.kanaScript === 'hira' || pr.kanaScript === 'kata') state.prefs.kanaScript = pr.kanaScript;
       if (['seion', 'dakuon', 'yoon'].includes(pr.kanaGroup)) state.prefs.kanaGroup = pr.kanaGroup;
       if (['CLEAR_MORA', 'WITH_WORD'].includes(pr.kanaReadMode)) state.prefs.kanaReadMode = pr.kanaReadMode;
-      if (typeof pr.zenSpeed === 'number') state.prefs.zenSpeed = pr.zenSpeed;
-      if (typeof pr.zenPitch === 'number') state.prefs.zenPitch = pr.zenPitch;
-      if (typeof pr.zenHappy === 'number') state.prefs.zenHappy = pr.zenHappy;
+      for (const [key, min, max] of [['zenSpeed', 0.6, 1.4], ['zenPitch', -6, 12], ['zenHappy', 0, 100]]) {
+        if (typeof pr[key] === 'number' && Number.isFinite(pr[key])) state.prefs[key] = Math.max(min, Math.min(max, pr[key]));
+      }
     }
   }
 
-  async function applyDataset(dataset, persist = true) {
+  async function applyDataset(dataset, persist = true, preservePreferences = false) {
+    const validated = validateVocabJson(dataset);
+    if (!validated.ok) throw new Error(validated.error);
+    dataset = validated.dataset;
+    if (persist && !(await saveDatasetToIDB(dataset, 'active_dataset'))) {
+      showToast('Bộ nhớ trình duyệt không khả dụng hoặc đã đầy. Bộ từ chỉ dùng được trong phiên này.', 'error');
+    }
+    cancelCardMove();
+    stopAudio();
+    state.datasetVersion++;
     state.datasetTitle = (dataset.meta && dataset.meta.title) || 'Bộ từ vựng JLPT';
-    state.words = dataset.words || [];
+    state.datasetMeta = dataset.meta;
+    state.words = dataset.words;
     state.wordMap = new Map(state.words.map(w => [w.id, w]));
-    if (persist) await saveDatasetToIDB(dataset, 'active_dataset');
 
     const currentCount = state.words.filter(w => w.level === state.prefs.level).length;
     if (currentCount === 0 && state.words.length > 0) {
       const firstNonEmpty = LEVELS.find(lvl => state.words.some(w => w.level === lvl));
       if (firstNonEmpty) state.prefs.level = firstNonEmpty;
     }
-    state.prefs.topic = 'ALL';
-    savePrefs();
+    if (!preservePreferences) state.prefs.topic = 'ALL';
     rebuildTopicOptions();
+    savePrefs();
     rebuildFlashcardDeck();
     initMatchingRound();
     renderAll();
@@ -816,12 +1018,14 @@
       sel.appendChild(opt);
     });
     sel.value = topics.includes(state.prefs.topic) ? state.prefs.topic : 'ALL';
+    state.prefs.topic = sel.value;
   }
 
   // ---------- Flashcard Mode ----------
   function rebuildFlashcardDeck(shuffle = false) {
+    cancelCardMove();
     let deck = getFilteredWords(false);
-    if (shuffle) deck = [...deck].sort(() => Math.random() - 0.5);
+    if (shuffle) deck = shuffled(deck);
     state.fcDeck = deck;
     state.fcIndex = 0;
     state.fcFlipped = false;
@@ -836,6 +1040,7 @@
     });
 
     const total = state.fcDeck.length;
+    ['fcPrevBtn', 'fcNextBtn', 'fcMasterBtn', 'fcUnmasterBtn', 'fcShuffleBtn', 'fcSpeakFrontBtn', 'fcSpeakBackBtn'].forEach(id => { $(id).disabled = !total; });
     $('fcCounter').textContent = total ? `${state.fcIndex + 1} / ${total}` : '0 / 0';
     if (!total) {
       $('fcPerspective').classList.add('hidden');
@@ -847,6 +1052,9 @@
 
     const word = state.fcDeck[state.fcIndex];
     $('fcInner').classList.toggle('is-flipped', state.fcFlipped);
+    const faces = $('fcInner').querySelectorAll('.flashcard-face');
+    faces[0].inert = state.fcFlipped;
+    faces[1].inert = !state.fcFlipped;
     $('fcLevelBadge').textContent = word.level;
     $('fcTopicBadge').textContent = word.topic;
     $('fcMasteredBadge').classList.toggle('hidden', !state.progress.masteredIds.has(word.id));
@@ -860,11 +1068,12 @@
     $('fcBackWordMini').textContent = state.prefs.showFuri ? `${word.kanji}（${word.furigana}）` : word.kanji;
     $('fcMeaning').textContent = word.meaning;
 
+    $('fcMeaningLabel').textContent = word.meaningLang === 'en' ? 'Nghĩa (tiếng Anh)' : 'Nghĩa';
     if (word.example && word.example.ja) {
       $('fcExampleBox').classList.remove('hidden');
       $('fcExJa').textContent = word.example.ja;
       $('fcExFuri').textContent = state.prefs.showFuri && word.example.furi ? word.example.furi : '';
-      $('fcExVi').textContent = word.example.vi || '';
+      $('fcExVi').textContent = word.example.vi || word.example.en || '';
     } else {
       $('fcExampleBox').classList.add('hidden');
     }
@@ -890,6 +1099,7 @@
           const targetIdx = state.fcDeck.findIndex(item => item.id === rw.id);
           if (targetIdx >= 0) state.fcIndex = targetIdx;
           state.fcFlipped = false;
+          initMatchingRound();
           renderAll();
         };
         listEl.appendChild(chip);
@@ -900,14 +1110,20 @@
   }
 
   function flipFlashcard() {
-    if (!state.fcDeck.length) return;
+    if (!state.fcDeck.length || cardMoveTimer !== null) return;
     state.fcFlipped = !state.fcFlipped;
     $('fcInner').classList.toggle('is-flipped', state.fcFlipped);
+    const faces = $('fcInner').querySelectorAll('.flashcard-face');
+    faces[0].inert = state.fcFlipped;
+    faces[1].inert = !state.fcFlipped;
     if (state.fcFlipped) speakJapanese(state.fcDeck[state.fcIndex]);
   }
 
   function markFlashcard(mastered) {
     if (!state.fcDeck.length) return;
+    cancelCardMove();
+    stopAudio();
+    const oldIndex = state.fcIndex;
     const word = state.fcDeck[state.fcIndex];
     if (mastered) {
       state.progress.masteredIds.add(word.id);
@@ -916,7 +1132,11 @@
       state.progress.masteredIds.delete(word.id);
     }
     saveProgress();
-    if (state.prefs.fcFilter !== 'ALL') rebuildFlashcardDeck();
+    if (state.prefs.fcFilter !== 'ALL') {
+      rebuildFlashcardDeck();
+      const retained = state.fcDeck.findIndex(item => item.id === word.id);
+      state.fcIndex = state.fcDeck.length ? (retained >= 0 ? retained + 1 : oldIndex) % state.fcDeck.length : 0;
+    }
     else {
       state.fcIndex = (state.fcIndex + 1) % state.fcDeck.length;
       state.fcFlipped = false;
@@ -925,60 +1145,59 @@
     renderFlashcard();
   }
 
-  function goNextCard() {
-    if (!state.fcDeck.length) return;
-    const cardEl = $('fcPerspective');
-    cardEl.style.transition = 'transform 0.16s ease-out, opacity 0.16s ease-out';
-    cardEl.style.transform = 'translateX(-42px)';
-    cardEl.style.opacity = '0.35';
-    setTimeout(() => {
-      state.fcIndex = (state.fcIndex + 1) % state.fcDeck.length;
+  function cancelCardMove() {
+    clearTimeout(cardMoveTimer);
+    cardMoveTimer = null;
+    const card = $('fcPerspective');
+    card.style.transition = '';
+    card.style.transform = '';
+    card.style.opacity = '';
+  }
+
+  function moveCard(direction) {
+    if (!state.fcDeck.length || cardMoveTimer !== null) return;
+    stopAudio();
+    const card = $('fcPerspective');
+    card.style.transition = 'transform 0.14s ease-out, opacity 0.14s ease-out';
+    card.style.transform = `translateX(${-42 * direction}px)`;
+    card.style.opacity = '0.35';
+    cardMoveTimer = setTimeout(() => {
+      cardMoveTimer = null;
+      if (!state.fcDeck.length) { cancelCardMove(); return; }
+      state.fcIndex = (state.fcIndex + direction + state.fcDeck.length) % state.fcDeck.length;
       state.fcFlipped = false;
       renderFlashcard();
-      cardEl.style.transition = 'none';
-      cardEl.style.transform = 'translateX(42px)';
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        cardEl.style.transition = 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease-out';
-        cardEl.style.transform = 'translateX(0)';
-        cardEl.style.opacity = '1';
-      }));
+      card.style.transform = '';
+      card.style.opacity = '';
     }, 140);
   }
 
-  function goPrevCard() {
-    if (!state.fcDeck.length) return;
-    const cardEl = $('fcPerspective');
-    cardEl.style.transition = 'transform 0.16s ease-out, opacity 0.16s ease-out';
-    cardEl.style.transform = 'translateX(42px)';
-    cardEl.style.opacity = '0.35';
-    setTimeout(() => {
-      state.fcIndex = (state.fcIndex - 1 + state.fcDeck.length) % state.fcDeck.length;
-      state.fcFlipped = false;
-      renderFlashcard();
-      cardEl.style.transition = 'none';
-      cardEl.style.transform = 'translateX(-42px)';
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        cardEl.style.transition = 'transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease-out';
-        cardEl.style.transform = 'translateX(0)';
-        cardEl.style.opacity = '1';
-      }));
-    }, 140);
-  }
+  function goNextCard() { moveCard(1); }
+  function goPrevCard() { moveCard(-1); }
 
   // ---------- Pair Matching Mode ----------
   function initMatchingRound() {
+    clearTimeout(matchErrorTimer);
+    matchErrorTimer = null;
+    state.matchMatchedIds = new Set();
+    state.matchSelected = null;
+    state.matchErrors = null;
+    state.matchLocked = false;
+    state.matchLeftItems = [];
+    state.matchRightItems = [];
+    state.matchRoundPairs = [];
     const pool = getFilteredWords(true);
-    if (!pool.length) { state.matchRoundPairs = []; return; }
+    if (!pool.length) return;
     const unmastered = pool.filter(w => !state.progress.masteredIds.has(w.id));
     const mastered = pool.filter(w => state.progress.masteredIds.has(w.id));
-    const combined = [...unmastered.sort(() => Math.random() - 0.5), ...mastered.sort(() => Math.random() - 0.5)];
+    const combined = [...shuffled(unmastered), ...shuffled(mastered)];
     const chosen = combined.slice(0, Math.min(5, combined.length));
     state.matchRoundPairs = chosen;
     state.matchMatchedIds = new Set();
     state.matchSelected = null;
     state.matchLocked = false;
-    state.matchLeftItems = [...chosen].sort(() => Math.random() - 0.5);
-    state.matchRightItems = [...chosen].sort(() => Math.random() - 0.5);
+    state.matchLeftItems = shuffled(chosen);
+    state.matchRightItems = shuffled(chosen);
   }
 
   function renderMatching() {
@@ -988,6 +1207,7 @@
     $('matchProgressFill').style.width = totalPairs ? `${(matchedCount / totalPairs) * 100}%` : '0%';
     $('matchStreakBadge').textContent = `⚡ ${state.progress.streak}`;
     $('matchDirectionLabel').textContent = state.prefs.matchSwap ? 'Việt ⇄ Nhật' : 'Nhật ⇄ Việt';
+    $('matchEmpty').classList.toggle('hidden', totalPairs > 0);
     $('matchRoundComplete').classList.toggle('hidden', !(totalPairs > 0 && matchedCount === totalPairs));
     $('matchCompleteStreak').textContent = state.progress.streak;
 
@@ -1003,9 +1223,12 @@
       const isSelected = state.matchSelected && state.matchSelected.side === side && state.matchSelected.id === word.id;
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.dataset.wordId = word.id;
+      btn.dataset.side = side;
 
       let cls = 'w-full min-h-[68px] sm:min-h-[76px] p-3 sm:p-4 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center shadow-sm ';
-      if (isMatched) { cls += 'bg-matcha-50 border-matcha-400 text-matcha-600 opacity-45 cursor-default'; btn.disabled = true; }
+      if (state.matchErrors?.some(item => item.id === word.id && item.side === side)) cls += 'bg-[#FFF1F2] border-[#FB7185] animate-shake';
+      else if (isMatched) { cls += 'bg-matcha-50 border-matcha-400 text-matcha-600 opacity-45 cursor-default'; btn.disabled = true; }
       else if (isSelected) cls += 'bg-skysoft-50 border-skysoft-500 text-[#1D4ED8] scale-[1.02]';
       else cls += 'bg-white border-[#F1ECE6] hover:border-[#FF8FA3] text-[#332E2E] active:scale-[0.98]';
       btn.className = cls;
@@ -1034,7 +1257,7 @@
       return;
     }
     if (!state.matchSelected || state.matchSelected.side === side) {
-      state.matchSelected = { side, id: word.id, el: btnEl };
+      state.matchSelected = { side, id: word.id };
       renderMatching();
       return;
     }
@@ -1052,15 +1275,12 @@
       state.matchLocked = true;
       state.progress.streak = 0;
       saveProgress();
-      const applyErr = (el) => {
-        el.classList.remove('bg-skysoft-50', 'border-skysoft-500', 'bg-white', 'border-[#F1ECE6]');
-        el.classList.add('bg-[#FFF1F2]', 'border-[#FB7185]', 'animate-shake');
-      };
-      applyErr(first.el);
-      applyErr(btnEl);
-      $('matchStreakBadge').textContent = '⚡ 0';
-      setTimeout(() => {
+      state.matchErrors = [first, { side, id: word.id }];
+      renderMatching();
+      matchErrorTimer = setTimeout(() => {
+        matchErrorTimer = null;
         state.matchSelected = null;
+        state.matchErrors = null;
         state.matchLocked = false;
         renderMatching();
       }, 420);
@@ -1141,17 +1361,20 @@
       <div class="flex flex-wrap gap-1.5">${LEVELS.map(l => `<span class="px-2 py-0.5 rounded-lg bg-white font-bold">${l}: ${levelCounts[l]}</span>`).join('')}</div>
       <button id="btnConfirmImportJson" class="mt-1 py-2 px-3 rounded-xl bg-matcha-600 text-white font-extrabold hover:bg-matcha-500 transition">💾 Xác nhận lưu bộ từ vựng này</button>
     `;
-    $('btnConfirmImportJson').onclick = async () => {
+    $('btnConfirmImportJson').onclick = () => withDatasetLock(async () => {
       if (!state.pendingImport) return;
-      await applyDataset(state.pendingImport, true);
+      const dataset = state.pendingImport;
+      state.pendingImport = null;
+      await applyDataset(dataset, true);
       box.classList.add('hidden');
       state.mode = 'flashcard';
       renderAll();
       showToast(`Đã nạp ${total} từ vựng thành công!`, 'success');
-    };
+    });
   }
 
   function renderDataStats() {
+    renderModuleBadges();
     const grid = $('dataStatsGrid');
     grid.innerHTML = '';
     LEVELS.forEach(lvl => {
@@ -1168,17 +1391,103 @@
     });
   }
 
-  async function supabaseFetch(path, options = {}) {
-    const url = $('supaUrlInput').value.trim().replace(/\/$/, '');
+  function getSupabaseConfig() {
+    const url = $('supaUrlInput').value.trim().replace(/\/+$/, '');
     const key = $('supaKeyInput').value.trim();
-    if (!url || !key) throw new Error('Vui lòng nhập Supabase URL và Anon Key.');
-    safeSetLS(STORAGE_SUPA_KEY, { url, key, userKey: $('supaUserKeyInput').value.trim() || 'default_learner' });
-    const resp = await fetch(`${url}/rest/v1/${path}`, {
+    let parsed;
+    try { parsed = new URL(url); } catch { throw new Error('Supabase URL không hợp lệ.'); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || url.includes('YOUR_PROJECT')) {
+      throw new Error('Hãy nhập Project URL HTTP(S) của Supabase.');
+    }
+    if (!key || key.includes('YOUR_SUPABASE')) throw new Error('Hãy nhập Anon Key hoặc Publishable Key của Supabase.');
+    let role = '';
+    try { role = JSON.parse(atob(key.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role; } catch {}
+    if (key.startsWith('sb_secret_') || role === 'service_role') throw new Error('Không dùng Secret Key hoặc service_role trong trình duyệt. Hãy dùng khóa public.');
+    const tables = { words: 'jlpt_words', progress: 'jlpt_user_progress', ...(window.JLPT_SUPABASE_CONFIG?.tables || {}) };
+    for (const table of Object.values(tables)) {
+      if (typeof table !== 'string' || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) throw new Error('Tên bảng Supabase không hợp lệ trong supabase-config.js.');
+    }
+    safeSetLS(STORAGE_SUPA_KEY, { url, key });
+    return { url, key, tables };
+  }
+
+  async function supabaseRequest(config, path, options = {}, accessToken = '') {
+    const response = await fetchWithTimeout(`${config.url}/${path}`, {
       ...options,
-      headers: { 'apikey': key, 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json', ...(options.headers || {}) }
+      headers: { apikey: config.key, Authorization: `Bearer ${accessToken || config.key}`,
+        'Content-Type': 'application/json', ...(options.headers || {}) }
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return resp.status === 204 ? null : resp.json();
+    const text = await response.text();
+    let data = null;
+    if (text.trim()) {
+      try { data = JSON.parse(text); }
+      catch { if (response.ok) throw new Error('Supabase trả về dữ liệu không phải JSON.'); }
+    }
+    if (!response.ok) {
+      const message = data?.message || data?.msg || data?.error_description || data?.error || text.slice(0, 180);
+      throw new Error(`Supabase HTTP ${response.status}: ${message || response.statusText}`);
+    }
+    // PostgREST may send 201 with an empty body (return=minimal), not just 204.
+    return { data, response };
+  }
+
+  function supaSessionKey(config) { return `jlpt_supa_session_v1:${config.url}`; }
+
+  async function getSupabaseSession(config) {
+    const stored = safeGetLS(supaSessionKey(config));
+    let session = stored;
+    const expiry = Number(stored?.expires_at);
+    if (!stored || !stored.access_token || !Number.isFinite(expiry) || expiry <= Date.now() / 1000 + 60) {
+      const result = await supabaseRequest(config, stored?.refresh_token ? 'auth/v1/token?grant_type=refresh_token' : 'auth/v1/signup', {
+        method: 'POST', body: JSON.stringify(stored?.refresh_token ? { refresh_token: stored.refresh_token } : { data: { app: 'Kawaii JLPT' } })
+      });
+      session = result.data;
+      if (!session?.access_token || !session.user?.id) throw new Error('Chưa tạo được phiên học. Hãy bật Anonymous Sign-Ins trong Supabase → Authentication → Sign In / Providers.');
+      session.expires_at = session.expires_at || Math.floor(Date.now() / 1000) + (session.expires_in || 3600);
+      if (!safeSetLS(supaSessionKey(config), session)) throw new Error('Không lưu được phiên Supabase. Hãy cho phép bộ nhớ trình duyệt trước khi đồng bộ.');
+    }
+    if (!session.user?.id) throw new Error('Phiên Supabase không hợp lệ.');
+    $('supaUserKeyInput').value = session.user.id;
+    return session;
+  }
+
+  async function runSupabaseAction(action) {
+    const controls = ['btnSupaPullWords', 'btnSupaSyncProgress', 'btnSupaPullProgress', 'supaUrlInput', 'supaKeyInput'];
+    if ($('btnSupaSyncProgress').disabled) return;
+    controls.forEach(id => { $(id).disabled = true; });
+    $('supaStatusBadge').textContent = 'Đang kết nối...';
+    try { await action(getSupabaseConfig()); }
+    catch (err) {
+      $('supaStatusBadge').textContent = 'Lỗi kết nối';
+      const message = /anonymous.*(disabled|not allowed)/i.test(err.message)
+        ? 'Hãy bật Anonymous Sign-Ins trong Supabase → Authentication → Sign In / Providers.' : err.message;
+      showToast(message, 'error');
+    } finally { controls.forEach(id => { $(id).disabled = false; }); }
+  }
+
+  async function pullSupabaseWords(config) {
+    const words = [];
+    const seen = new Set();
+    while (true) {
+      const params = new URLSearchParams({ select: '*', order: 'id.asc', limit: '500', offset: String(words.length) });
+      const { data, response } = await supabaseRequest(config, `rest/v1/${config.tables.words}?${params}`, { headers: { Prefer: 'count=exact' } });
+      if (!Array.isArray(data)) throw new Error('Supabase không trả về danh sách từ vựng.');
+      if (!data.length) break;
+      for (const word of data) {
+        if (!word?.id || seen.has(word.id)) throw new Error('Danh sách từ thay đổi hoặc bị trùng khi phân trang. Hãy tải lại.');
+        seen.add(word.id);
+      }
+      words.push(...data);
+      const totalText = response.headers.get('content-range')?.split('/')[1];
+      const total = totalText && totalText !== '*' ? Number(totalText) : null;
+      if (total !== null && words.length >= total) break;
+      // Without an exact count, continue until an empty page; server row caps may be <500.
+    }
+    const result = validateVocabJson({ meta: { title: 'Supabase JLPT Cloud' }, words });
+    if (!result.ok) throw new Error(words.length ? result.error : 'Bảng Supabase chưa có từ vựng. Bộ từ hiện tại được giữ nguyên.');
+    await applyDataset(result.dataset);
+    $('supaStatusBadge').textContent = 'Đã kết nối';
+    showToast(`Đã tải ${state.words.length} từ từ Supabase!`, 'success');
   }
 
   function renderAll() {
@@ -1199,7 +1508,7 @@
 
   // ---------- Event Bindings ----------
   document.querySelectorAll('.mode-tab').forEach(btn => {
-    btn.onclick = () => { state.mode = btn.dataset.mode; renderAll(); };
+    btn.onclick = () => { cancelCardMove(); stopAudio(); state.mode = btn.dataset.mode; renderAll(); };
   });
   $('topicSelect').onchange = (e) => {
     state.prefs.topic = e.target.value;
@@ -1214,12 +1523,12 @@
     renderAll();
   };
 
-  $('btnQuickSampleEmpty').onclick = async () => {
+  $('btnQuickSampleEmpty').onclick = () => withDatasetLock(async () => {
     await applyDataset(SAMPLE_DATASET, true);
     state.mode = 'flashcard';
     renderAll();
     showToast('Đã nạp bộ mẫu nhỏ!', 'success');
-  };
+  });
   $('btnGoToDataEmpty').onclick = () => { state.mode = 'data'; renderAll(); };
 
   // Flashcard Touch Swipe + Tap Flip
@@ -1227,14 +1536,17 @@
     const cardEl = $('fcPerspective');
     let startX = 0, startY = 0, dragging = false, didSwipe = false;
     cardEl.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('button') || !state.fcDeck.length) return;
+      if (e.button !== 0 || e.target.closest('button') || !state.fcDeck.length || cardMoveTimer !== null) return;
+      cardEl.setPointerCapture(e.pointerId);
       startX = e.clientX; startY = e.clientY; dragging = true; didSwipe = false;
       cardEl.style.transition = 'none';
     });
     cardEl.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (Math.abs(dy) > 10) didSwipe = true;
       if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+        didSwipe = true;
         cardEl.style.transform = `translateX(${Math.max(-90, Math.min(90, dx * 0.55))}px) rotate(${Math.max(-6, Math.min(6, dx * 0.04))}deg)`;
       }
     });
@@ -1244,7 +1556,6 @@
       const dx = e.clientX - startX, dy = e.clientY - startY;
       if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy)) {
         didSwipe = true;
-        setTimeout(() => { didSwipe = false; }, 180);
         if (dx < 0) goNextCard(); else goPrevCard();
       } else {
         cardEl.style.transition = 'transform 0.2s ease-out';
@@ -1254,11 +1565,12 @@
     cardEl.addEventListener('pointerup', finishSwipe);
     cardEl.addEventListener('pointercancel', () => {
       dragging = false;
+      didSwipe = true;
       cardEl.style.transition = 'transform 0.2s ease-out';
       cardEl.style.transform = 'translateX(0) rotate(0deg)';
     });
     cardEl.addEventListener('click', (e) => {
-      if (e.target.closest('button') || didSwipe) return;
+      if (e.target.closest('button') || didSwipe || cardMoveTimer !== null) return;
       flipFlashcard();
     });
   })();
@@ -1271,21 +1583,23 @@
   $('fcNextBtn').onclick = () => goNextCard();
   $('fcShuffleBtn').onclick = () => { rebuildFlashcardDeck(true); renderFlashcard(); showToast('Đã xáo trộn bộ thẻ!', 'info'); };
   document.querySelectorAll('.fc-filter-btn').forEach(btn => {
-    btn.onclick = () => { state.prefs.fcFilter = btn.dataset.filter; rebuildFlashcardDeck(); renderFlashcard(); };
+    btn.onclick = () => { state.prefs.fcFilter = btn.dataset.filter; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
   });
 
   document.addEventListener('keydown', (e) => {
+    if (!$('confirmModal').classList.contains('hidden') || !$('audioModal').classList.contains('hidden')) return;
+    if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
     if (state.mode !== 'flashcard' || !state.fcDeck.length) return;
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+    if (document.activeElement.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(document.activeElement.tagName)) return;
     if (e.code === 'Space') { e.preventDefault(); flipFlashcard(); }
-    else if (e.code === 'ArrowRight') goNextCard();
-    else if (e.code === 'ArrowLeft') goPrevCard();
+    else if (e.code === 'ArrowRight') { e.preventDefault(); goNextCard(); }
+    else if (e.code === 'ArrowLeft') { e.preventDefault(); goPrevCard(); }
     else if (e.key === '1') markFlashcard(false);
     else if (e.key === '2') markFlashcard(true);
     else if (e.key.toLowerCase() === 'r') speakJapanese(state.fcDeck[state.fcIndex]);
   });
 
-  $('matchSwapBtn').onclick = () => { state.prefs.matchSwap = !state.prefs.matchSwap; state.matchSelected = null; savePrefs(); renderMatching(); };
+  $('matchSwapBtn').onclick = () => { clearTimeout(matchErrorTimer); state.matchLocked = false; state.matchErrors = null; state.prefs.matchSwap = !state.prefs.matchSwap; state.matchSelected = null; savePrefs(); renderMatching(); };
   $('matchNewRoundBtn').onclick = () => { initMatchingRound(); renderMatching(); };
   $('matchNextRoundCta').onclick = () => { initMatchingRound(); renderMatching(); };
 
@@ -1301,13 +1615,13 @@
   });
 
   // Module Downloader Buttons
-  $('btnDownloadOpenJLPT').onclick = downloadOpenJLPTFromGitHub;
-  $('btnDownloadDreamofi').onclick = downloadDreamofiFromGitHub;
+  $('btnDownloadOpenJLPT').onclick = () => withDatasetLock(downloadOpenJLPTFromGitHub);
+  $('btnDownloadDreamofi').onclick = () => withDatasetLock(downloadDreamofiFromGitHub);
   $('dreamofiZipInput').onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     try {
-      await parseDreamofiZipAndMerge(await file.arrayBuffer());
+      await withDatasetLock(async () => parseDreamofiZipAndMerge(await file.arrayBuffer()));
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -1329,27 +1643,22 @@
     $('zenPitchVal').textContent = `${state.prefs.zenPitch} st`;
     $('zenHappyInput').value = state.prefs.zenHappy;
     $('zenHappyVal').textContent = `${state.prefs.zenHappy}%`;
-    $('audioModal').classList.remove('hidden');
+    openModal('audioModal');
   };
-  $('closeAudioModalBtn').onclick = () => $('audioModal').classList.add('hidden');
+  $('closeAudioModalBtn').onclick = () => closeModal('audioModal');
   $('zenSpeedInput').oninput = (e) => { $('zenSpeedVal').textContent = `${Number(e.target.value).toFixed(2)}x`; };
   $('zenPitchInput').oninput = (e) => { $('zenPitchVal').textContent = `${e.target.value} st`; };
   $('zenHappyInput').oninput = (e) => { $('zenHappyVal').textContent = `${e.target.value}%`; };
-  $('testVoiceBtn').onclick = () => {
-    state.prefs.kanaReadMode = $('kanaReadModeSelect').value;
-    state.prefs.zenSpeed = Number($('zenSpeedInput').value);
-    state.prefs.zenPitch = Number($('zenPitchInput').value);
-    state.prefs.zenHappy = Number($('zenHappyInput').value);
-    speakWithZenMarine('こんにちは、日本語を楽しく勉強しましょう。');
-  };
+  function audioFormPrefs() {
+    return { kanaReadMode: $('kanaReadModeSelect').value,
+      zenSpeed: Number($('zenSpeedInput').value), zenPitch: Number($('zenPitchInput').value), zenHappy: Number($('zenHappyInput').value) };
+  }
+  $('testVoiceBtn').onclick = () => speakWithZenMarine('こんにちは、日本語を楽しく勉強しましょう。', audioFormPrefs());
   $('saveAudioModalBtn').onclick = () => {
-    state.prefs.kanaReadMode = $('kanaReadModeSelect').value;
-    state.prefs.zenSpeed = Number($('zenSpeedInput').value);
-    state.prefs.zenPitch = Number($('zenPitchInput').value);
-    state.prefs.zenHappy = Number($('zenHappyInput').value);
+    Object.assign(state.prefs, audioFormPrefs());
     savePrefs();
     renderAll();
-    $('audioModal').classList.add('hidden');
+    closeModal('audioModal');
     showToast('Đã lưu cài đặt ZEN-TTS Marine!', 'success');
   };
 
@@ -1366,16 +1675,24 @@
     $('tabPasteJson').className = 'flex-1 py-1.5 rounded-xl bg-white shadow-sm text-[#332E2E] transition';
     $('tabUploadFile').className = 'flex-1 py-1.5 rounded-xl text-[#786D69] transition';
   };
-  $('jsonFileInput').onchange = (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => showValidationResult(validateVocabJson(r.result));
-    r.readAsText(f);
-    e.target.value = '';
+  async function previewJsonFile(file) {
+    if (!file) return;
+    try {
+      const inferredLevel = file.name.match(/(?:^|[^a-z0-9])(n[1-5])(?:[^a-z0-9]|$)/i)?.[1]?.toUpperCase() || '';
+      showValidationResult(validateVocabJson(await file.text(), inferredLevel));
+    } catch (err) { showToast('Không đọc được file JSON: ' + err.message, 'error'); }
+  }
+  $('jsonFileInput').onchange = event => {
+    previewJsonFile(event.target.files[0]);
+    event.target.value = '';
   };
+  $('jsonDropZone').addEventListener('dragover', event => { event.preventDefault(); });
+  $('jsonDropZone').addEventListener('drop', event => {
+    event.preventDefault();
+    previewJsonFile(event.dataTransfer.files[0]);
+  });
   $('btnValidatePaste').onclick = () => showValidationResult(validateVocabJson($('jsonPasteInput').value));
-  $('btnLoadSampleData').onclick = async () => { await applyDataset(SAMPLE_DATASET, true); showToast('Đã nạp bộ JSON mẫu!', 'success'); };
+  $('btnLoadSampleData').onclick = () => withDatasetLock(async () => { await applyDataset(SAMPLE_DATASET); showToast('Đã nạp bộ JSON mẫu!', 'success'); });
 
   $('btnExportProgress').onclick = () => {
     const payload = {
@@ -1388,102 +1705,106 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
     a.download = `jlpt-progress-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
-  $('importProgressInput').onchange = (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => {
-      try {
-        const p = JSON.parse(r.result);
-        state.progress.masteredIds = new Set(p.masteredIds || []);
-        state.progress.streak = Number(p.streak) || 0;
-        state.progress.bestStreak = Number(p.bestStreak) || 0;
-        state.progress.totalPairsMatched = Number(p.totalPairsMatched) || 0;
-        saveProgress();
-        renderAll();
-        showToast('Đã khôi phục tiến độ!', 'success');
-      } catch {
-        showToast('File tiến độ không hợp lệ.', 'error');
-      }
-    };
-    r.readAsText(f);
-    e.target.value = '';
+  $('importProgressInput').onchange = async event => {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const progress = normalizeProgress(JSON.parse(await file.text()));
+      state.progress = progress;
+      saveProgress();
+      refreshStudyProgress();
+      showToast('Đã khôi phục tiến độ!', 'success');
+    } catch (err) { showToast('File tiến độ không hợp lệ: ' + err.message, 'error'); }
   };
-  $('btnClearDataset').onclick = async () => {
+  $('btnClearDataset').onclick = () => withDatasetLock(async () => {
     if (!(await showConfirm('Xóa bộ từ vựng?', 'Từ vựng sẽ bị xóa nhưng tiến độ học vẫn giữ nguyên.'))) return;
     await clearDatasetIDB();
+    cancelCardMove();
+    stopAudio();
+    state.datasetVersion++;
     state.words = [];
     state.wordMap = new Map();
     state.datasetTitle = '';
+    state.datasetMeta = {};
+    state.fcDeck = [];
+    state.fcIndex = 0;
+    state.fcFlipped = false;
+    state.pendingImport = null;
+    $('validationPreview').classList.add('hidden');
+    rebuildTopicOptions();
+    initMatchingRound();
     renderAll();
-  };
+    showToast('Đã xóa bộ từ vựng. Tiến độ học được giữ nguyên.', 'success');
+  });
   $('btnResetProgress').onclick = async () => {
-    if (!(await showConfirm('Đặt lại tiến độ?', 'Toàn bộ từ đã thuộc và chuỗi đúng sẽ về 0.'))) return;
+    if (!(await showConfirm('Đặt lại tiến độ?', 'Tiến độ trên trình duyệt sẽ về 0. Bản đã lưu trên Supabase không thay đổi cho đến khi bạn lưu lại.'))) return;
     state.progress = { masteredIds: new Set(), streak: 0, bestStreak: 0, totalPairsMatched: 0 };
     saveProgress();
-    renderAll();
+    refreshStudyProgress();
   };
 
-  $('btnSupaPullWords').onclick = async () => {
-    try {
-      const rows = await supabaseFetch('jlpt_words?select=*&order=level.desc');
-      const res = validateVocabJson({ meta: { title: 'Supabase JLPT Cloud' }, words: rows });
-      if (!res.ok) throw new Error(res.error);
-      await applyDataset(res.dataset, true);
-      $('supaStatusBadge').textContent = 'Đã kết nối';
-      showToast(`Đã tải ${res.stats.total} từ từ Supabase!`, 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
+  $('btnSupaPullWords').onclick = () => withDatasetLock(() => runSupabaseAction(pullSupabaseWords));
+  $('btnSupaSyncProgress').onclick = () => runSupabaseAction(async config => {
+    const session = await getSupabaseSession(config);
+    await supabaseRequest(config, `rest/v1/${config.tables.progress}?on_conflict=user_key`, {
+      method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ user_key: session.user.id, mastered_ids: Array.from(state.progress.masteredIds),
+        streak: state.progress.streak, best_streak: state.progress.bestStreak, total_pairs_matched: state.progress.totalPairsMatched })
+    }, session.access_token);
+    $('supaStatusBadge').textContent = 'Đã lưu tiến độ';
+    showToast('Đã lưu tiến độ lên Supabase!', 'success');
+  });
+  $('btnSupaPullProgress').onclick = () => runSupabaseAction(async config => {
+    const session = await getSupabaseSession(config);
+    const params = new URLSearchParams({ select: '*', user_key: `eq.${session.user.id}` });
+    const { data } = await supabaseRequest(config, `rest/v1/${config.tables.progress}?${params}`, {}, session.access_token);
+    if (!Array.isArray(data)) throw new Error('Dữ liệu tiến độ Supabase không hợp lệ.');
+    if (!data.length) { $('supaStatusBadge').textContent = 'Chưa có bản lưu'; showToast('Chưa có tiến độ đã lưu trên Supabase.'); return; }
+    const progress = normalizeProgress({ masteredIds: data[0].mastered_ids, streak: data[0].streak,
+      bestStreak: data[0].best_streak, totalPairsMatched: data[0].total_pairs_matched });
+    if (!(await showConfirm('Khôi phục từ Supabase?', 'Tiến độ trên trình duyệt sẽ được thay bằng bản đã lưu trên Supabase.'))) {
+      $('supaStatusBadge').textContent = 'Đã hủy khôi phục'; return;
     }
-  };
-  $('btnSupaSyncProgress').onclick = async () => {
-    try {
-      const userKey = $('supaUserKeyInput').value.trim() || 'default_learner';
-      await supabaseFetch('jlpt_user_progress?on_conflict=user_key', {
-        method: 'POST',
-        headers: { 'Prefer': 'resolution=merge-duplicates' },
-        body: JSON.stringify({
-          user_key: userKey,
-          mastered_ids: Array.from(state.progress.masteredIds),
-          streak: state.progress.streak,
-          best_streak: state.progress.bestStreak,
-          total_pairs_matched: state.progress.totalPairsMatched
-        })
-      });
-      $('supaStatusBadge').textContent = 'Đã đồng bộ';
-      showToast('Đã đồng bộ tiến độ lên Supabase!', 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
+    state.progress = progress;
+    saveProgress();
+    refreshStudyProgress();
+    $('supaStatusBadge').textContent = 'Đã khôi phục';
+    showToast('Đã khôi phục tiến độ từ Supabase!', 'success');
+  });
 
   async function bootstrap() {
-    loadProgress();
-    loadPrefs();
-    const cfgFromFile = window.JLPT_SUPABASE_CONFIG;
-    const supaCfg = safeGetLS(STORAGE_SUPA_KEY, null);
-    if (supaCfg) {
-      $('supaUrlInput').value = supaCfg.url || '';
-      $('supaKeyInput').value = supaCfg.key || '';
-      $('supaUserKeyInput').value = supaCfg.userKey || 'default_learner';
-    } else if (cfgFromFile && cfgFromFile.url && !cfgFromFile.url.includes('YOUR_PROJECT_ID')) {
-      $('supaUrlInput').value = cfgFromFile.url;
-      $('supaKeyInput').value = cfgFromFile.anonKey || '';
-      $('supaUserKeyInput').value = cfgFromFile.defaultUserKey || 'default_learner';
-    }
-
-    initZenTtsFromCacheOrNetwork(false);
-
-    const savedDataset = await loadDatasetFromIDB('active_dataset');
-    if (savedDataset && Array.isArray(savedDataset.words) && savedDataset.words.length > 0) {
-      await applyDataset(savedDataset, false);
-    } else {
+    document.querySelectorAll('header, main').forEach(el => { el.inert = true; });
+    try {
+      loadProgress();
+      loadPrefs();
+      const fileConfig = window.JLPT_SUPABASE_CONFIG;
+      const savedConfig = safeGetLS(STORAGE_SUPA_KEY);
+      const config = savedConfig || fileConfig;
+      if (config && typeof config.url === 'string' && !config.url.includes('YOUR_PROJECT_ID')) {
+        $('supaUrlInput').value = config.url;
+        $('supaKeyInput').value = config.key || config.anonKey || '';
+        const session = safeGetLS(supaSessionKey(config));
+        $('supaUserKeyInput').value = session?.user?.id || '';
+      }
+      const saved = await loadDatasetFromIDB();
+      if (saved) await applyDataset(saved, false, true);
+      else { rebuildTopicOptions(); renderAll(); }
+    } catch (err) {
       renderAll();
+      showToast('Không mở được bộ dữ liệu đã lưu: ' + err.message + ' Bạn có thể nhập lại bộ từ.', 'error');
+    } finally {
+      $('startupStatus').classList.add('hidden');
+      document.querySelectorAll('header, main').forEach(el => { el.inert = false; });
     }
+    initZenTtsFromCacheOrNetwork(false);
   }
 
+  window.addEventListener('pagehide', () => { stopAudio(); clearWavCache(); });
   bootstrap();
 })();
