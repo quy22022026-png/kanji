@@ -2,53 +2,14 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kawaii JLPT — Học từ vựng N5–N1 (ZEN-TTS Marine)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Nunito', 'system-ui', 'sans-serif'],
-            jp: ['"M PLUS Rounded 1c"', '"Hiragino Maru Gothic ProN"', 'sans-serif'],
-          },
-          colors: {
-            cream: '#FFFDF9',
-            peach: {
-              50: '#FFF1F3',
-              100: '#FFE4E8',
-              200: '#FECDD6',
-              400: '#FF8FA3',
-              500: '#FB6F92',
-            },
-            matcha: {
-              50: '#ECFDF5',
-              100: '#D1FAE5',
-              400: '#34D399',
-              500: '#10B981',
-              600: '#059669',
-            },
-            skysoft: {
-              50: '#EFF6FF',
-              100: '#DBEAFE',
-              400: '#60A5FA',
-              500: '#3B82F6',
-            },
-          },
-          boxShadow: {
-            soft: '0 8px 24px -4px rgba(149, 157, 165, 0.10)',
-            card: '0 14px 36px -8px rgba(251, 111, 146, 0.12), 0 4px 12px -2px rgba(0,0,0,0.04)',
-          }
-        }
-      }
-    }
-  </script>
+  <link rel="stylesheet" href="vendor/tailwind.min.css" />
   <link rel="stylesheet" href="styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="vendor/jszip.min.js"></script>
 </head>
 <body class="min-h-screen flex flex-col">
 
@@ -70,20 +31,20 @@
         <!-- Mode Switcher -->
         <div class="flex items-center gap-1.5 shrink-0">
           <nav class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl gap-1 shrink-0" aria-label="Chế độ">
-            <button id="navFlashcard" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="flashcard">
+            <button id="navFlashcard" aria-label="Lật thẻ" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="flashcard">
               <span>🃏</span><span class="hidden md:inline">Lật thẻ</span>
             </button>
-            <button id="navMatching" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="matching">
+            <button id="navMatching" aria-label="Ghép cặp" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="matching">
               <span>🧩</span><span class="hidden md:inline">Ghép cặp</span>
             </button>
-            <button id="navKana" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="kana">
+            <button id="navKana" aria-label="Bảng chữ cái" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="kana">
               <span class="font-jp font-extrabold text-xs sm:text-sm">あア</span><span class="hidden md:inline">Bảng chữ</span>
             </button>
-            <button id="navData" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="data">
+            <button id="navData" aria-label="Mô-đun và dữ liệu" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="data">
               <span>📦</span><span class="hidden md:inline">Mô-đun</span>
             </button>
           </nav>
-          <button id="btnAudioSettings" type="button" class="w-9 h-9 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] flex items-center justify-center text-sm transition shrink-0 relative" title="Cài đặt ZEN-TTS Marine">
+          <button id="btnAudioSettings" aria-label="Cài đặt âm thanh" type="button" class="w-9 h-9 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] flex items-center justify-center text-sm transition shrink-0 relative" title="Cài đặt ZEN-TTS Marine">
             🎧
             <span id="zenStatusDot" class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#D1C7BF]"></span>
           </button>
@@ -114,6 +75,8 @@
       </div>
     </div>
   </header>
+
+  <p id="startupStatus" role="status" class="text-center text-sm p-4">Đang mở dữ liệu học…</p>
 
   <!-- Main Workspace -->
   <main class="flex-1 max-w-4xl w-full mx-auto px-3 sm:px-5 py-4 sm:py-6 flex flex-col">
@@ -160,7 +123,7 @@
           <p class="text-xs text-[#8C7F7A] mt-1">Thử chuyển sang "Tất cả" hoặc chọn cấp độ/chủ đề khác nhé.</p>
         </div>
 
-        <div id="fcPerspective" style="touch-action: pan-y;" class="perspective-1000 w-full h-[350px] sm:h-[390px] cursor-pointer select-none">
+        <div id="fcPerspective" tabindex="0" role="button" aria-label="Lật thẻ từ vựng" style="touch-action: pan-y;" class="perspective-1000 w-full h-[350px] sm:h-[390px] cursor-pointer select-none">
           <div id="fcInner" class="flashcard-inner">
             <!-- FRONT FACE -->
             <div class="flashcard-face bg-white border border-[#F1ECE6] rounded-[28px] shadow-card p-5 sm:p-7 flex flex-col justify-between">
@@ -199,7 +162,7 @@
               </div>
 
               <div class="my-auto py-2 text-center">
-                <p class="text-[11px] font-extrabold uppercase tracking-wider text-[#FB6F92] mb-1">Nghĩa</p>
+                <p id="fcMeaningLabel" class="text-[11px] font-extrabold uppercase tracking-wider text-[#FB6F92] mb-1">Nghĩa</p>
                 <h3 id="fcMeaning" class="text-xl sm:text-2xl font-extrabold text-[#2B2626] leading-snug mb-3"></h3>
 
                 <div id="fcExampleBox" class="hidden bg-white/90 border border-[#F1ECE6] rounded-2xl p-3 text-left mb-3">
@@ -223,7 +186,7 @@
       </div>
 
       <div class="w-full max-w-xl flex items-center justify-between gap-2 sm:gap-3 pt-1">
-        <button id="fcPrevBtn" class="px-3.5 sm:px-4 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">
+        <button id="fcPrevBtn" aria-label="Thẻ trước" class="px-3.5 sm:px-4 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">
           ←
         </button>
         <button id="fcUnmasterBtn" class="flex-1 py-3 px-4 rounded-2xl bg-[#FFF4ED] border border-[#FED7AA] text-[#EA580C] font-extrabold text-sm hover:bg-[#FFEDD5] active:scale-[0.98] transition">
@@ -232,7 +195,7 @@
         <button id="fcMasterBtn" class="flex-1 py-3 px-4 rounded-2xl bg-matcha-50 border border-[#A7F3D0] text-matcha-600 font-extrabold text-sm hover:bg-matcha-100 active:scale-[0.98] transition">
           ✅ Đã thuộc
         </button>
-        <button id="fcNextBtn" class="px-3.5 sm:px-4 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">
+        <button id="fcNextBtn" aria-label="Thẻ tiếp theo" class="px-3.5 sm:px-4 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">
           →
         </button>
       </div>
@@ -260,6 +223,8 @@
           </button>
         </div>
       </div>
+
+      <p id="matchEmpty" class="hidden text-center text-sm p-6">Không có từ ở cấp độ/chủ đề này. Hãy chọn bộ lọc khác.</p>
 
       <div id="matchGridWrapper" class="grid grid-cols-2 gap-3 sm:gap-5 flex-1 content-start">
         <div id="matchLeftCol" class="flex flex-col gap-2.5 sm:gap-3"></div>
@@ -346,7 +311,7 @@
                 <span class="text-xs font-extrabold text-[#332E2E]">2. Từ điển dreamofi (Việt)</span>
                 <span id="badgeDreamofi" class="text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-[#F6EFE8] text-[#786D69]">Chưa tải</span>
               </div>
-              <p class="text-[11px] text-[#786D69] leading-relaxed">Dịch nghĩa tiếng Việt & âm Hán Việt cho toàn bộ OpenJLPT từ <code class="text-peach-500">dreamofi/yomichan-Vietnamese-dictionary</code>.</p>
+              <p class="text-[11px] text-[#786D69] leading-relaxed">Bổ sung nghĩa Việt và âm Hán Việt cho các mục khớp từ <code class="text-peach-500">dreamofi/yomichan-Vietnamese-dictionary</code>.</p>
             </div>
             <div class="flex flex-col gap-1.5">
               <button id="btnDownloadDreamofi" type="button" class="w-full py-2.5 px-3 rounded-xl bg-skysoft-500 text-white text-xs font-extrabold hover:opacity-95 transition">
@@ -399,7 +364,7 @@
           </div>
 
           <div id="panelUploadFile" class="flex flex-col gap-2">
-            <label for="jsonFileInput" class="border-2 border-dashed border-[#E5DDD5] hover:border-[#FF8FA3] rounded-2xl p-6 text-center cursor-pointer transition bg-[#FFFDF9]">
+            <label id="jsonDropZone" for="jsonFileInput" class="border-2 border-dashed border-[#E5DDD5] hover:border-[#FF8FA3] rounded-2xl p-6 text-center cursor-pointer transition bg-[#FFFDF9]">
               <div class="text-2xl mb-1">📄</div>
               <p class="text-xs font-extrabold text-[#4A4240]">Chọn hoặc kéo thả file <code class="text-peach-500">.json</code></p>
               <p class="text-[11px] text-[#9C8F8A] mt-1">Hỗ trợ schema chuẩn hoặc JSON từ OpenJLPT</p>
@@ -423,18 +388,20 @@
             <span id="supaStatusBadge" class="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-[#F6EFE8] text-[#786D69]">Chưa kết nối</span>
           </div>
           <p class="text-xs text-[#786D69] leading-relaxed">
-            Nhập Project URL và Anon Key (hoặc cấu hình sẵn trong <code>supabase-config.js</code>) để tải từ vựng và đồng bộ tiến độ.
+            Nhập Project URL và khóa public để tải từ vựng. Bật <strong>Anonymous Sign-Ins</strong> trên Supabase để lưu/khôi phục tiến độ riêng của trình duyệt này.
           </p>
           <input id="supaUrlInput" type="url" placeholder="https://your-project.supabase.co" class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2 text-xs focus:outline-none focus:border-[#60A5FA]" />
           <input id="supaKeyInput" type="password" placeholder="Supabase Anon Public Key" class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2 text-xs focus:outline-none focus:border-[#60A5FA]" />
-          <input id="supaUserKeyInput" type="text" placeholder="Mã người học (mặc định: default_learner)" value="default_learner" class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2 text-xs focus:outline-none focus:border-[#60A5FA]" />
+          <label for="supaUserKeyInput" class="text-xs text-[#786D69]">ID người học (Supabase tự cấp khi lưu/khôi phục)</label>
+          <input id="supaUserKeyInput" type="text" readonly placeholder="Chưa tạo phiên học" value="" class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2 text-xs focus:outline-none focus:border-[#60A5FA]" />
           <div class="grid grid-cols-2 gap-2 pt-1">
             <button id="btnSupaPullWords" class="py-2 px-3 rounded-xl bg-skysoft-50 border border-skysoft-100 text-skysoft-500 text-xs font-extrabold hover:bg-skysoft-100 transition">
               ☁️ Tải từ vựng về
             </button>
             <button id="btnSupaSyncProgress" class="py-2 px-3 rounded-xl bg-matcha-50 border border-matcha-100 text-matcha-600 text-xs font-extrabold hover:bg-matcha-100 transition">
-              🔄 Đồng bộ tiến độ
+              ☁️ Lưu tiến độ lên
             </button>
+            <button id="btnSupaPullProgress" class="col-span-2 py-2 px-3 rounded-xl bg-matcha-50 border border-matcha-100 text-matcha-600 text-xs font-extrabold hover:bg-matcha-100 transition">📥 Khôi phục tiến độ từ Supabase</button>
           </div>
         </div>
       </div>
@@ -469,10 +436,10 @@
   </footer>
 
   <!-- Toast Notification -->
-  <div id="toastContainer" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center gap-2"></div>
+  <div id="toastContainer" role="status" aria-live="polite" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center gap-2"></div>
 
   <!-- In-page Confirmation Modal -->
-  <div id="confirmModal" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
+  <div id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
     <div class="bg-white rounded-3xl max-w-sm w-full p-6 shadow-xl border border-[#F1ECE6] animate-pop">
       <h3 id="confirmTitle" class="text-base font-extrabold text-[#332E2E] mb-1.5">Xác nhận</h3>
       <p id="confirmMessage" class="text-xs text-[#6E625E] mb-5 leading-relaxed"></p>
@@ -484,14 +451,14 @@
   </div>
 
   <!-- ZEN-TTS Marine Settings Modal -->
-  <div id="audioModal" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+  <div id="audioModal" role="dialog" aria-modal="true" aria-labelledby="audioModalTitle" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
     <div class="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-[#F1ECE6] animate-pop flex flex-col gap-3.5 my-auto">
       <div class="flex items-center justify-between">
         <div>
-          <h3 class="text-base font-extrabold text-[#332E2E]">🎧 Cài đặt ZEN-TTS Marine v1.3.0</h3>
+          <h3 id="audioModalTitle" class="text-base font-extrabold text-[#332E2E]">🎧 Cài đặt ZEN-TTS Marine v1.3.0</h3>
           <p class="text-[11px] text-[#8C7F7A]">44.1 kHz WebGPU / WASM · Chỉ dùng duy nhất ZEN-TTS</p>
         </div>
-        <button id="closeAudioModalBtn" class="w-8 h-8 rounded-xl bg-[#F6EFE8] text-[#4A4240] font-extrabold text-xs">✕</button>
+        <button id="closeAudioModalBtn" aria-label="Đóng cài đặt âm thanh" class="w-8 h-8 rounded-xl bg-[#F6EFE8] text-[#4A4240] font-extrabold text-xs">✕</button>
       </div>
 
       <div class="rounded-2xl bg-[#FFFDF9] border border-[#F1ECE6] p-3.5 flex items-center justify-between gap-2">
@@ -548,6 +515,7 @@
     </div>
   </div>
 
+  <noscript><p class="text-center p-4">Hãy bật JavaScript để sử dụng ứng dụng.</p></noscript>
   <script src="supabase-config.js"></script>
   <script src="app.js"></script>
 </body>
