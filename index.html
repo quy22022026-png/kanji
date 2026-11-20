@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Kawaii JLPT — Lật Thẻ, Bảng Chữ &amp; Google Sheets</title>
+  <title>Kawaii JLPT — Lật Thẻ, SRS &amp; Google Sheets</title>
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -34,7 +34,7 @@
     };
   </script>
 
-  <style>
+  <style id="appCustomStyles">
     body {
       background-color: #FFFDF9;
       color: #332E2E;
@@ -156,7 +156,6 @@
         </div>
 
         <div class="flex items-center gap-1.5 shrink-0">
-          <!-- Mode Tabs (plugin modules can append new tabs here automatically) -->
           <nav id="modeNav" class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl gap-1 shrink-0" aria-label="Chế độ">
             <button id="navFlashcard" type="button" aria-label="Lật thẻ" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="flashcard">
               <span>🃏</span><span class="hidden md:inline">Lật thẻ</span>
@@ -172,7 +171,6 @@
             </button>
           </nav>
 
-          <!-- ZEN-TTS Marine Settings Button -->
           <button id="btnAudioSettings" aria-label="Cài đặt âm thanh" type="button" class="w-9 h-9 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] flex items-center justify-center text-sm transition shrink-0 relative" title="Cài đặt ZEN-TTS Marine">
             🎧
             <span id="zenStatusDot" class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#D1C7BF]"></span>
@@ -180,7 +178,7 @@
         </div>
       </div>
 
-      <!-- Row 2: Study Status Bar (Level Pills + Topic + Furi Toggle + Progress) -->
+      <!-- Row 2: Study Status Bar -->
       <div id="studyStatusBar" class="flex flex-col gap-2">
         <div class="flex items-center justify-between gap-2 flex-wrap">
           <div id="levelPills" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5"></div>
@@ -199,7 +197,7 @@
           <div class="flex-1 h-2.5 bg-[#F3ECE4] rounded-full overflow-hidden">
             <div id="levelProgressFill" class="h-full bg-gradient-to-r from-[#FF8FA3] to-[#34D399] rounded-full transition-all duration-500" style="width: 0%"></div>
           </div>
-          <span id="levelProgressText" class="text-xs font-extrabold text-[#5E524E] whitespace-nowrap">JLPT N5 — 0/0 thuộc</span>
+          <span id="levelProgressText" class="text-xs font-extrabold text-[#5E524E] whitespace-nowrap">JLPT N5 — 0/0</span>
         </div>
       </div>
     </div>
@@ -208,42 +206,76 @@
   <!-- ==================== MAIN WORKSPACE ==================== -->
   <main id="appWorkspace" class="flex-1 max-w-4xl w-full mx-auto px-3 sm:px-5 py-4 sm:py-6 flex flex-col">
 
-    <!-- VIEW 1: FLASHCARD 3D -->
-    <section id="flashcardView" class="flex-1 flex flex-col items-center justify-between gap-4">
-      <div class="w-full flex items-center justify-between gap-2 flex-wrap">
-        <div class="flex items-center gap-1.5 bg-[#F6EFE8] p-1 rounded-2xl text-xs font-bold">
-          <button type="button" class="fc-filter-btn px-3 py-1 rounded-xl transition" data-filter="ALL">Tất cả</button>
-          <button type="button" class="fc-filter-btn px-3 py-1 rounded-xl transition" data-filter="UNMASTERED">Chưa nhớ</button>
-          <button type="button" class="fc-filter-btn px-3 py-1 rounded-xl transition" data-filter="MASTERED">Đã thuộc</button>
-        </div>
-        <div class="flex items-center gap-2 text-xs font-bold text-[#786D69]">
-          <span id="fcCounter">0 / 0</span>
-          <button id="fcShuffleBtn" type="button" class="px-2.5 py-1 rounded-xl bg-white border border-[#E8DFD6] hover:border-[#FF8FA3] transition" title="Xáo trộn thẻ">🔀 Trộn</button>
+    <!-- VIEW 1: FLASHCARD 3D + SRS + SESSION BATCHING -->
+    <section id="flashcardView" class="flex-1 flex flex-col items-center justify-between gap-3.5">
+      <!-- SRS Reminder & Filter + Session Size Bar -->
+      <div class="w-full flex flex-col gap-2">
+        <div class="w-full flex items-center justify-between gap-2 flex-wrap">
+          <div class="flex items-center gap-1 bg-[#F6EFE8] p-1 rounded-2xl text-xs font-bold overflow-x-auto no-scrollbar max-w-full">
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="SMART">🎯 Phiên học</button>
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="DUE">🔔 Cần ôn (<span id="dueCountBadge">0</span>)</button>
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="NEW">🆕 Mới (<span id="newCountBadge">0</span>)</button>
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="ALL">Tất cả</button>
+          </div>
+
+          <div class="flex items-center gap-1.5 text-xs font-bold text-[#786D69] ml-auto">
+            <select id="sessionSizeSelect" title="Số từ mỗi phiên học" class="text-xs font-bold bg-white border border-[#E8DFD6] text-[#4A4240] rounded-xl px-2 py-1 outline-none focus:border-[#FF8FA3]">
+              <option value="10">10 từ/phiên</option>
+              <option value="20">20 từ/phiên</option>
+              <option value="30">30 từ/phiên</option>
+              <option value="0">Không giới hạn</option>
+            </select>
+            <span id="fcCounter" class="px-1.5 whitespace-nowrap">0 / 0</span>
+            <button id="fcShuffleBtn" type="button" class="px-2.5 py-1 rounded-xl bg-white border border-[#E8DFD6] hover:border-[#FF8FA3] transition" title="Xáo trộn phiên hiện tại">🔀</button>
+          </div>
         </div>
       </div>
 
-      <div class="w-full max-w-xl flex-1 min-h-[350px] sm:min-h-[395px] flex items-center justify-center">
-        <div id="fcEmptyFilter" class="hidden bg-white border border-[#F1ECE6] rounded-3xl p-8 text-center w-full shadow-soft">
-          <p class="text-2xl mb-2">🎉</p>
-          <p class="font-extrabold text-[#332E2E]">Không có từ nào trong bộ lọc này!</p>
-          <p class="text-xs text-[#8C7F7A] mt-1">Thử chuyển sang "Tất cả" hoặc chọn cấp độ/chủ đề khác nhé.</p>
+      <!-- Flashcard Stage -->
+      <div class="w-full max-w-xl flex-1 min-h-[350px] sm:min-h-[390px] flex items-center justify-center">
+        <!-- Empty / Session Complete State -->
+        <div id="fcEmptyFilter" class="hidden bg-white border border-[#F1ECE6] rounded-3xl p-7 text-center w-full shadow-soft animate-pop">
+          <p id="fcEmptyIcon" class="text-3xl mb-2">🎉</p>
+          <p id="fcEmptyTitle" class="text-lg font-extrabold text-[#332E2E]">Hoàn thành phiên học!</p>
+          <p id="fcEmptyDesc" class="text-xs text-[#786D69] mt-1.5 leading-relaxed"></p>
+          <div id="fcSessionSummary" class="hidden mt-4 grid grid-cols-3 gap-2 text-center">
+            <div class="rounded-2xl bg-[#FFFDF9] border border-[#F1ECE6] p-2.5">
+              <p class="text-[10px] font-bold text-[#8C7F7A]">Đã ôn</p>
+              <p id="sumReviewed" class="text-lg font-extrabold text-[#332E2E]">0</p>
+            </div>
+            <div class="rounded-2xl bg-matcha-50 border border-[#A7F3D0] p-2.5">
+              <p class="text-[10px] font-bold text-matcha-600">Nhớ tốt</p>
+              <p id="sumGood" class="text-lg font-extrabold text-matcha-600">0</p>
+            </div>
+            <div class="rounded-2xl bg-[#FFF4ED] border border-[#FED7AA] p-2.5">
+              <p class="text-[10px] font-bold text-[#EA580C]">Cần học lại</p>
+              <p id="sumAgain" class="text-lg font-extrabold text-[#EA580C]">0</p>
+            </div>
+          </div>
+          <div class="mt-5 flex items-center justify-center gap-2 flex-wrap">
+            <button id="btnStartNextSession" type="button" class="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#FF8FA3] to-[#FB6F92] text-white font-extrabold text-xs sm:text-sm shadow-sm hover:opacity-95 active:scale-95 transition">
+              ▶ Học phiên tiếp theo
+            </button>
+            <button id="btnViewAllCards" type="button" class="px-4 py-2.5 rounded-2xl bg-[#F6EFE8] text-[#4A4240] font-extrabold text-xs sm:text-sm hover:bg-[#EDE3D8] transition">
+              Xem tất cả từ
+            </button>
+          </div>
         </div>
 
-        <div id="fcPerspective" tabindex="0" role="button" aria-label="Lật thẻ từ vựng" style="touch-action: pan-y;" class="perspective-1000 w-full h-[360px] sm:h-[400px] cursor-pointer select-none">
+        <!-- 3D Card -->
+        <div id="fcPerspective" tabindex="0" role="button" aria-label="Lật thẻ từ vựng" style="touch-action: pan-y;" class="perspective-1000 w-full h-[355px] sm:h-[395px] cursor-pointer select-none">
           <div id="fcInner" class="flashcard-inner">
             <!-- FRONT FACE -->
             <div class="flashcard-face bg-white border border-[#F1ECE6] rounded-[28px] shadow-card p-5 sm:p-7 flex flex-col justify-between">
               <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1.5 flex-wrap min-w-0">
                   <span id="fcLevelBadge" class="px-2.5 py-1 rounded-xl text-xs font-extrabold bg-peach-50 text-peach-500 shrink-0">N5</span>
-                  <span id="fcTopicBadge" class="px-2.5 py-1 rounded-xl text-xs font-bold bg-[#F6EFE8] text-[#6E625E] truncate max-w-[165px]">Chủ đề</span>
+                  <span id="fcSrsBadge" class="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-skysoft-50 text-skysoft-500 shrink-0">🆕 Từ mới</span>
+                  <span id="fcTopicBadge" class="hidden sm:inline-block px-2.5 py-1 rounded-xl text-xs font-bold bg-[#F6EFE8] text-[#6E625E] truncate max-w-[140px]">Chủ đề</span>
                 </div>
-                <div class="flex items-center gap-1.5 shrink-0">
-                  <span id="fcMasteredBadge" class="hidden px-2.5 py-1 rounded-xl text-xs font-extrabold bg-matcha-50 text-matcha-600">✓ Đã thuộc</span>
-                  <button id="fcSpeakFrontBtn" type="button" class="w-9 h-9 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90" title="Nghe phát âm (R)">
-                    🔊
-                  </button>
-                </div>
+                <button id="fcSpeakFrontBtn" type="button" class="w-9 h-9 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90 shrink-0" title="Nghe phát âm (R)">
+                  🔊
+                </button>
               </div>
 
               <div class="flex flex-col items-center justify-center text-center my-auto px-2">
@@ -298,18 +330,33 @@
               </div>
 
               <div class="text-center text-[11px] font-bold text-[#A89B96]">
-                Ấn vùng trống để lật lại ↺ · Lướt trái/phải đổi từ ↔
+                Đánh giá bên dưới để app hẹn lịch nhắc ôn từ này 👇
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="w-full max-w-xl flex items-center justify-between gap-2 sm:gap-3 pt-1">
-        <button id="fcPrevBtn" type="button" aria-label="Thẻ trước" class="px-3.5 sm:px-4 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">←</button>
-        <button id="fcUnmasterBtn" type="button" class="flex-1 py-3 px-4 rounded-2xl bg-[#FFF4ED] border border-[#FED7AA] text-[#EA580C] font-extrabold text-sm hover:bg-[#FFEDD5] active:scale-[0.98] transition">🤔 Chưa nhớ</button>
-        <button id="fcMasterBtn" type="button" class="flex-1 py-3 px-4 rounded-2xl bg-matcha-50 border border-[#A7F3D0] text-matcha-600 font-extrabold text-sm hover:bg-matcha-100 active:scale-[0.98] transition">✅ Đã thuộc</button>
-        <button id="fcNextBtn" type="button" aria-label="Thẻ tiếp theo" class="px-3.5 sm:px-4 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">→</button>
+      <!-- SRS 3-Level Rating Bar + Prev/Next -->
+      <div class="w-full max-w-xl flex items-center justify-between gap-1.5 sm:gap-2.5 pt-1">
+        <button id="fcPrevBtn" type="button" aria-label="Thẻ trước" class="px-3 sm:px-3.5 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition shrink-0">←</button>
+
+        <button id="fcRateAgainBtn" type="button" class="flex-1 py-2.5 px-2 rounded-2xl bg-[#FFF1F2] border border-[#FECDD3] text-[#E11D48] font-extrabold text-xs sm:text-sm hover:bg-[#FFE4E6] active:scale-[0.98] transition flex flex-col items-center leading-tight">
+          <span>🔴 Quên</span>
+          <span class="text-[10px] font-bold opacity-80">Học lại ngay</span>
+        </button>
+
+        <button id="fcRateHardBtn" type="button" class="flex-1 py-2.5 px-2 rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] text-[#D97706] font-extrabold text-xs sm:text-sm hover:bg-[#FEF3C7] active:scale-[0.98] transition flex flex-col items-center leading-tight">
+          <span>🟡 Hơi nhớ</span>
+          <span class="text-[10px] font-bold opacity-80">Ôn 1 ngày</span>
+        </button>
+
+        <button id="fcRateGoodBtn" type="button" class="flex-1 py-2.5 px-2 rounded-2xl bg-matcha-50 border border-[#A7F3D0] text-matcha-600 font-extrabold text-xs sm:text-sm hover:bg-matcha-100 active:scale-[0.98] transition flex flex-col items-center leading-tight">
+          <span>🟢 Nhớ kỹ</span>
+          <span id="fcGoodIntervalHint" class="text-[10px] font-bold opacity-80">Ôn 1 ngày</span>
+        </button>
+
+        <button id="fcNextBtn" type="button" aria-label="Thẻ tiếp theo" class="px-3 sm:px-3.5 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition shrink-0">→</button>
       </div>
     </section>
 
@@ -362,7 +409,6 @@
             <p class="text-xs text-[#8C7F7A] mt-0.5">Học qua thẻ lật 3D hoặc xem toàn bộ bảng lưới 46 âm cơ bản, âm đục &amp; âm ghép.</p>
           </div>
 
-          <!-- Switch between Flashcard & Grid -->
           <div class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl text-xs font-extrabold self-start sm:self-auto shrink-0">
             <button id="kanaViewCardBtn" type="button" class="px-3 py-1.5 rounded-xl transition">🃏 Lật thẻ</button>
             <button id="kanaViewGridBtn" type="button" class="px-3 py-1.5 rounded-xl transition">▦ Xem lưới</button>
@@ -399,7 +445,6 @@
 
         <div id="kanaPerspective" tabindex="0" role="button" aria-label="Lật thẻ chữ cái" style="touch-action: pan-y;" class="perspective-1000 w-full max-w-md h-[320px] sm:h-[350px] cursor-pointer select-none">
           <div id="kanaInner" class="flashcard-inner">
-            <!-- KANA FRONT -->
             <div class="flashcard-face bg-white border border-[#F1ECE6] rounded-[28px] shadow-card p-6 flex flex-col justify-between">
               <div class="flex items-center justify-between">
                 <span id="kanaFrontTag" class="px-2.5 py-1 rounded-xl text-xs font-extrabold bg-peach-50 text-peach-500">Hiragana · Cơ bản</span>
@@ -407,17 +452,14 @@
                   🔊
                 </button>
               </div>
-
               <div class="my-auto text-center">
                 <div id="kanaFrontChar" class="font-jp text-8xl sm:text-9xl font-extrabold text-[#2B2626] leading-none">あ</div>
               </div>
-
               <div class="text-center text-xs font-bold text-[#A89B96]">
                 Ấn vào thẻ để xem cách đọc ↻ · Lướt ↔ đổi chữ
               </div>
             </div>
 
-            <!-- KANA BACK -->
             <div class="flashcard-face flashcard-back bg-gradient-to-b from-white to-[#FFF8FA] border border-[#F4E3E8] rounded-[28px] shadow-card p-6 flex flex-col justify-between">
               <div class="flex items-center justify-between">
                 <span id="kanaBackPairLabel" class="text-xs font-extrabold text-[#8C7F7A]">Đối chiếu Katakana</span>
@@ -425,7 +467,6 @@
                   🔊
                 </button>
               </div>
-
               <div class="my-auto text-center flex flex-col items-center gap-3">
                 <div id="kanaBackRomaji" class="text-4xl sm:text-5xl font-extrabold text-peach-500 tracking-wide">a</div>
                 <div class="flex items-center gap-3">
@@ -439,7 +480,6 @@
                   </div>
                 </div>
               </div>
-
               <div class="text-center text-xs font-bold text-[#A89B96]">
                 Ấn để lật lại ↺
               </div>
@@ -463,13 +503,13 @@
     <!-- VIEW 4: MODULES & GOOGLE SHEETS HUB -->
     <section id="dataView" class="hidden flex-1 flex flex-col gap-5 animate-pop">
 
-      <!-- Module 1: Google Sheets Sync + CSV/JSON -->
+      <!-- Module 1: Google Sheets Auto-Sync + CSV/JSON -->
       <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-4">
         <div class="flex items-start justify-between gap-2 flex-wrap">
           <div>
-            <h2 class="text-base font-extrabold text-[#332E2E]">📊 1. Dữ liệu từ Google Sheets của bạn</h2>
+            <h2 class="text-base font-extrabold text-[#332E2E]">📊 1. Tự động đồng bộ Google Sheets</h2>
             <p class="text-xs text-[#786D69] mt-0.5">
-              Hỗ trợ chuẩn 13 cột của trang tính <strong>JLPT Vocabulary (N5–N3)</strong> (<code class="text-peach-500">Kanji, Kana, Furigana [a], Romaji, Hán-Việt, Nghĩa tiếng Việt, Loại từ, Chủ đề, Ví dụ...</code>).
+              Chỉ cần dán link trang tính <strong>1 lần duy nhất</strong> (hoặc điền vào <code>DEFAULT_SHEET_URL</code> trong <code>app.js</code>). Từ lần sau, mở app là tự nạp ngay &amp; tự kiểm tra cập nhật mới ở nền.
             </p>
           </div>
           <span id="badgeSheetStatus" class="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-matcha-50 text-matcha-600 shrink-0">Sẵn sàng</span>
@@ -481,7 +521,7 @@
 
           <div class="flex items-center justify-between gap-2 flex-wrap pt-1">
             <div class="flex items-center gap-3 text-xs font-bold text-[#4A4240] flex-wrap">
-              <span class="text-[#8C7F7A]">Tên các Sheet:</span>
+              <span class="text-[#8C7F7A]">Các Sheet:</span>
               <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N5" checked />N5</label>
               <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N4" checked />N4</label>
               <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N3" checked />N3</label>
@@ -489,12 +529,16 @@
               <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N1" />N1</label>
             </div>
             <button id="btnSyncGoogleSheet" type="button" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#FF8FA3] to-[#FB6F92] text-white text-xs font-extrabold hover:opacity-95 active:scale-[0.98] transition">
-              🔄 Đồng bộ từ Google Sheets
+              🔄 Lưu link &amp; Đồng bộ ngay
             </button>
           </div>
+
+          <label class="flex items-center gap-2 text-xs font-bold text-[#5E524E] cursor-pointer pt-1">
+            <input id="autoSyncSheetCheck" type="checkbox" class="accent-[#FB6F92] w-4 h-4" checked />
+            <span>Tự động đồng bộ ngầm với Google Sheets mỗi khi mở app</span>
+          </label>
         </div>
 
-        <!-- Local CSV / JSON Import Fallback -->
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           <label for="csvFileInput" class="py-2.5 px-3 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] text-xs font-extrabold text-center cursor-pointer transition flex items-center justify-center gap-1.5">
             <span>📄 Nạp file .CSV (từ Sheet)</span>
@@ -533,12 +577,33 @@
         </div>
       </div>
 
-      <!-- Module 3: Dataset Stats & Progress Backup -->
+      <!-- Module 3: Export Separated Source Files & 1-Click ZIP -->
+      <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-3">
+        <div class="flex items-start justify-between gap-2 flex-wrap">
+          <div>
+            <h2 class="text-base font-extrabold text-[#332E2E]">🛠️ 3. Tải gói ZIP tách file (HTML · CSS · JS)</h2>
+            <p class="text-xs text-[#786D69] mt-0.5">
+              Nén sẵn <code>index.html</code>, <code>styles.css</code>, <code>app.js</code> &amp; <code>plugin-sample.js</code> thành 1 tệp <strong>.zip</strong> để bạn giải nén vào thư mục repo (chung với <code>zen-worker.js</code> và <code>vendor/</code>).
+            </p>
+          </div>
+          <button id="btnExportZip" type="button" class="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#FF8FA3] to-[#FB6F92] text-white text-xs font-extrabold shadow-sm hover:opacity-95 active:scale-[0.98] transition shrink-0">
+            🗜️ Tải trọn bộ kawaii-jlpt.zip
+          </button>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <button id="btnExportHtml" type="button" class="py-2 px-3 rounded-2xl bg-peach-50 hover:bg-peach-100 text-peach-500 text-xs font-extrabold transition">📄 index.html</button>
+          <button id="btnExportCss" type="button" class="py-2 px-3 rounded-2xl bg-skysoft-50 hover:bg-skysoft-100 text-skysoft-500 text-xs font-extrabold transition">🎨 styles.css</button>
+          <button id="btnExportJs" type="button" class="py-2 px-3 rounded-2xl bg-matcha-50 hover:bg-matcha-100 text-matcha-600 text-xs font-extrabold transition">⚡ app.js</button>
+          <button id="btnExportPluginSample" type="button" class="py-2 px-3 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] text-xs font-extrabold transition">🧩 plugin-sample.js</button>
+        </div>
+      </div>
+
+      <!-- Module 4: Dataset & SRS Stats + Backup -->
       <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-4">
         <div class="flex items-center justify-between flex-wrap gap-2">
           <div>
-            <h3 class="text-base font-extrabold text-[#332E2E]">📈 Thống kê từ vựng &amp; Tiến độ</h3>
-            <p class="text-xs text-[#8C7F7A]">Kho từ lưu trong IndexedDB, tiến độ lưu trong localStorage tách biệt.</p>
+            <h3 class="text-base font-extrabold text-[#332E2E]">📈 Thống kê từ vựng &amp; Lịch ôn SRS</h3>
+            <p class="text-xs text-[#8C7F7A]">Lưu riêng lịch sử &amp; ngày hẹn ôn cho từng ID từ vựng (xuất file để chuyển thiết bị).</p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
             <button id="btnExportProgress" type="button" class="px-3 py-1.5 rounded-xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-xs font-extrabold text-[#4A4240] transition">📤 Xuất tiến độ</button>
@@ -558,7 +623,7 @@
 
   <!-- FOOTER -->
   <footer class="max-w-4xl w-full mx-auto px-4 py-3 text-center text-[11px] font-semibold text-[#9C8F8A] border-t border-[#F1ECE6]/60">
-    音声合成：<a href="https://zenryokukikai.com" target="_blank" rel="noopener noreferrer" class="underline hover:text-[#FB6F92]">ZEN-TTS Marine</a> · Dữ liệu: Google Sheets (JLPT Vocabulary) · Plugin API: <code>window.KawaiiApp</code>
+    音声合成：<a href="https://zenryokukikai.com" target="_blank" rel="noopener noreferrer" class="underline hover:text-[#FB6F92]">ZEN-TTS Marine</a> · Dữ liệu: Google Sheets (Auto-Sync) · SRS &amp; Plugin API: <code>window.KawaiiApp</code>
   </footer>
 
   <!-- ==================== TAP-TO-TRANSLATE BOTTOM SHEET ==================== -->
@@ -678,28 +743,30 @@
 
   <!-- =========================================================================
        CORE JAVASCRIPT ARCHITECTURE (window.KawaiiApp)
-       Có thể tách nguyên phần <script> này ra file app.js khi đưa lên GitHub Pages,
-       và viết thêm các file plugin .js mới gọi window.KawaiiApp.registerModule(...)
        ========================================================================= -->
-  <script>
+  <script id="appCoreScript">
     (() => {
       'use strict';
 
+      const CLEAN_HTML_CLONE = document.documentElement.cloneNode(true);
+
       // =======================================================================
-      // 1. CẤU HÌNH CƠ BẢN (Điền sẵn link Google Sheet của bạn tại đây nếu muốn)
+      // 1. CẤU HÌNH CƠ BẢN (Dán link Google Sheet cố định tại đây để mọi thiết bị tự tải)
       // =======================================================================
       const DEFAULT_SHEET_URL = ''; // VD: 'https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit'
       const LEVELS = ['N5', 'N4', 'N3', 'N2', 'N1'];
-      const STORAGE_PROGRESS_KEY = 'jlpt_user_progress_v2';
-      const STORAGE_PREFS_KEY = 'jlpt_ui_prefs_v2';
+      const SRS_INTERVALS_DAYS = [1, 3, 7, 14, 30];
+      const DAY_MS = 24 * 60 * 60 * 1000;
+
+      const STORAGE_PROGRESS_KEY = 'jlpt_user_progress_v3';
+      const STORAGE_PREFS_KEY = 'jlpt_ui_prefs_v3';
       const STORAGE_SHEET_KEY = 'jlpt_sheet_url_v2';
       const IDB_NAME = 'KawaiiJLPTDB_v2';
       const IDB_STORE = 'datasets';
       const ZEN_CACHE_NAME = 'zen-tts-marine-v1.3.0';
 
-      // Bộ dữ liệu mẫu trích trực tiếp theo cấu trúc 13 cột từ trang tính JLPT Vocabulary (N5-N3)
       const SAMPLE_DATASET = {
-        meta: { title: 'JLPT Vocabulary (Mẫu từ Sheet)', version: '2.0' },
+        meta: { title: 'JLPT Vocabulary (Mẫu từ Sheet)', version: '3.0' },
         words: [
           { id: 'N5_001', level: 'N5', kanji: '', kana: 'おはよう', furigana: 'おはよう', romaji: 'ohayou', hanViet: '', meaning: 'Chào buổi sáng (thân mật; lịch sự: おはようございます)', pos: 'Thán từ', topic: 'Chào hỏi, giao tiếp & đại từ', example: { ja: 'おはよう。今日もいい天気だね。', romaji: 'Ohayou. Kyou mo ii tenki da ne.', vi: 'Chào buổi sáng. Hôm nay trời cũng đẹp nhỉ.' } },
           { id: 'N5_002', level: 'N5', kanji: '', kana: 'こんにちは', furigana: 'こんにちは', romaji: 'konnichiwa', hanViet: '', meaning: 'Xin chào (buổi trưa, chiều)', pos: 'Thán từ', topic: 'Chào hỏi, giao tiếp & đại từ', example: { ja: 'こんにちは、やまださん。お元気ですか。', romaji: 'Konnichiwa, Yamada-san. Ogenki desu ka.', vi: 'Xin chào anh/chị Yamada. Anh/chị có khỏe không?' } },
@@ -717,7 +784,6 @@
         ]
       };
 
-      // Từ điển trợ từ & chữ thông dụng hỗ trợ dịch câu ví dụ khi ấn vào
       const BUILTIN_MINI_DICT = {
         'は': { reading: 'わ (wa)', meaning: 'Trợ từ chủ đề câu', note: 'Đứng sau chủ ngữ/chủ đề' },
         'が': { reading: 'が (ga)', meaning: 'Trợ từ chủ ngữ / nhấn mạnh đối tượng', note: 'Hoặc nghĩa "nhưng" khi nối câu' },
@@ -762,7 +828,7 @@
       };
 
       // =======================================================================
-      // 2. EVENT BUS & STATE (Nền tảng mở rộng cho các plugin JS sau này)
+      // 2. EVENT BUS & STATE (Bao gồm SRS từng từ + Phiên học)
       // =======================================================================
       const listeners = new Map();
       const events = {
@@ -770,9 +836,7 @@
           if (!listeners.has(event)) listeners.set(event, new Set());
           listeners.get(event).add(fn);
         },
-        off(event, fn) {
-          listeners.get(event)?.delete(fn);
-        },
+        off(event, fn) { listeners.get(event)?.delete(fn); },
         emit(event, payload) {
           listeners.get(event)?.forEach(fn => {
             try { fn(payload); } catch (err) { console.error(`[Plugin Event ${event}]`, err); }
@@ -783,14 +847,14 @@
       const registeredModules = new Map();
 
       const state = {
-        mode: 'flashcard', // 'flashcard' | 'matching' | 'kana' | 'data' | <plugin-id>
+        mode: 'flashcard',
         datasetTitle: '',
         datasetMeta: {},
         words: [],
         wordMap: new Map(),
-        dictIndex: new Map(), // Tra cứu nhanh mọi từ/kanji trong bộ dữ liệu
+        dictIndex: new Map(),
         progress: {
-          masteredIds: new Set(),
+          wordStats: {},
           streak: 0,
           bestStreak: 0,
           totalPairsMatched: 0
@@ -799,9 +863,12 @@
           level: 'N5',
           topic: 'ALL',
           showFuri: true,
-          fcFilter: 'ALL',
+          fcFilter: 'SMART',
+          sessionSize: 10,
+          autoSyncSheet: true,
+          sheetLevels: ['N5', 'N4', 'N3'],
           matchSwap: false,
-          kanaView: 'card', // 'card' | 'grid' (Mặc định dạng lật thẻ!)
+          kanaView: 'card',
           kanaScript: 'hira',
           kanaGroup: 'seion',
           kanaReadMode: 'CLEAR_MORA',
@@ -810,11 +877,10 @@
           zenHappy: 60,
           fallbackWebSpeech: true
         },
-        // Flashcard vocab state
         fcDeck: [],
         fcIndex: 0,
         fcFlipped: false,
-        // Matching state
+        sessionStats: { reviewed: 0, good: 0, again: 0 },
         matchRoundPairs: [],
         matchLeftItems: [],
         matchRightItems: [],
@@ -822,11 +888,9 @@
         matchMatchedIds: new Set(),
         matchLocked: false,
         matchErrors: null,
-        // Kana flashcard state
         kanaDeck: [],
         kanaIndex: 0,
         kanaFlipped: false,
-        // Popup translate state
         activePopupSpeakText: ''
       };
 
@@ -836,7 +900,93 @@
       let matchErrorTimer = null;
 
       // =======================================================================
-      // 3. HELPERS & STORAGE (IndexedDB + localStorage)
+      // 3. SRS ENGINE (THEO DÕI TỪNG TỪ & NHẮC LỊCH ÔN)
+      // =======================================================================
+      function getWordStat(wordId) {
+        return state.progress.wordStats[wordId] || null;
+      }
+
+      function getWordSrsInfo(wordId, now = Date.now()) {
+        const st = getWordStat(wordId);
+        if (!st || (st.reps === 0 && st.lapses === 0)) {
+          return {
+            status: 'new',
+            label: '🆕 Từ mới',
+            badgeClass: 'bg-skysoft-50 text-skysoft-500',
+            nextGoodDays: SRS_INTERVALS_DAYS[0]
+          };
+        }
+        const nextGoodIdx = Math.min(SRS_INTERVALS_DAYS.length - 1, st.reps);
+        const nextGoodDays = SRS_INTERVALS_DAYS[nextGoodIdx];
+
+        if (st.nextReviewAt <= now) {
+          return {
+            status: 'due',
+            label: st.lapses > 0 && st.reps === 0 ? '🔴 Học lại' : '🔔 Cần ôn ngay',
+            badgeClass: 'bg-[#FFF1F2] text-[#E11D48]',
+            nextGoodDays
+          };
+        }
+        const daysLeft = Math.max(1, Math.ceil((st.nextReviewAt - now) / DAY_MS));
+        if (st.intervalDays >= 14) {
+          return {
+            status: 'mastered',
+            label: `✅ Thành thạo (${daysLeft}n)`,
+            badgeClass: 'bg-matcha-50 text-matcha-600',
+            nextGoodDays
+          };
+        }
+        return {
+          status: 'scheduled',
+          label: `⏳ Ôn sau ${daysLeft} ngày`,
+          badgeClass: 'bg-[#FEF3C7] text-[#B45309]',
+          nextGoodDays
+        };
+      }
+
+      function isWordLearned(wordId) {
+        const st = getWordStat(wordId);
+        return !!(st && st.reps >= 1);
+      }
+
+      function isWordDue(wordId, now = Date.now()) {
+        const st = getWordStat(wordId);
+        return !!(st && (st.reps > 0 || st.lapses > 0) && st.nextReviewAt <= now);
+      }
+
+      function isWordNew(wordId) {
+        const st = getWordStat(wordId);
+        return !st || (st.reps === 0 && st.lapses === 0);
+      }
+
+      function rateWordSrs(wordId, rating) {
+        const now = Date.now();
+        const prev = getWordStat(wordId) || { reps: 0, intervalDays: 0, nextReviewAt: 0, lastReviewedAt: 0, lapses: 0 };
+        const next = { ...prev, lastReviewedAt: now };
+
+        if (rating === 'again') {
+          next.reps = 0;
+          next.intervalDays = 0;
+          next.lapses = (prev.lapses || 0) + 1;
+          next.nextReviewAt = now + 5 * 60 * 1000;
+        } else if (rating === 'hard') {
+          next.reps = Math.max(1, prev.reps);
+          next.intervalDays = 1;
+          next.nextReviewAt = now + 1 * DAY_MS;
+        } else if (rating === 'good') {
+          const idx = Math.min(SRS_INTERVALS_DAYS.length - 1, prev.reps);
+          next.intervalDays = SRS_INTERVALS_DAYS[idx];
+          next.reps = prev.reps + 1;
+          next.nextReviewAt = now + next.intervalDays * DAY_MS;
+        }
+
+        state.progress.wordStats[wordId] = next;
+        saveProgress();
+        return next;
+      }
+
+      // =======================================================================
+      // 4. HELPERS & STORAGE (IndexedDB + localStorage)
       // =======================================================================
       function shuffled(items) {
         const arr = [...items];
@@ -914,7 +1064,7 @@
 
       function saveProgress() {
         safeSetLS(STORAGE_PROGRESS_KEY, {
-          masteredIds: Array.from(state.progress.masteredIds),
+          wordStats: state.progress.wordStats,
           streak: state.progress.streak,
           bestStreak: state.progress.bestStreak,
           totalPairsMatched: state.progress.totalPairsMatched
@@ -923,11 +1073,23 @@
 
       function loadProgress() {
         const p = safeGetLS(STORAGE_PROGRESS_KEY, null);
-        if (p && Array.isArray(p.masteredIds)) {
-          state.progress.masteredIds = new Set(p.masteredIds);
+        if (p) {
+          state.progress.wordStats = (p.wordStats && typeof p.wordStats === 'object') ? p.wordStats : {};
           state.progress.streak = Number(p.streak) || 0;
           state.progress.bestStreak = Number(p.bestStreak) || 0;
           state.progress.totalPairsMatched = Number(p.totalPairsMatched) || 0;
+          return;
+        }
+        const legacy = safeGetLS('jlpt_user_progress_v2', null);
+        if (legacy && Array.isArray(legacy.masteredIds)) {
+          const now = Date.now();
+          legacy.masteredIds.forEach(id => {
+            state.progress.wordStats[id] = { reps: 2, intervalDays: 3, nextReviewAt: now + 3 * DAY_MS, lastReviewedAt: now, lapses: 0 };
+          });
+          state.progress.streak = Number(legacy.streak) || 0;
+          state.progress.bestStreak = Number(legacy.bestStreak) || 0;
+          state.progress.totalPairsMatched = Number(legacy.totalPairsMatched) || 0;
+          saveProgress();
         }
       }
 
@@ -942,7 +1104,7 @@
       }
 
       // =======================================================================
-      // 4. TOAST & MODAL HELPERS
+      // 5. TOAST & MODAL HELPERS
       // =======================================================================
       function showToast(message, type = 'info') {
         const colors = {
@@ -984,7 +1146,7 @@
       }
 
       // =======================================================================
-      // 5. KANA ALPHABET DATASET (46 Cơ bản + 25 Âm đục + 33 Âm ghép)
+      // 6. KANA ALPHABET DATASET
       // =======================================================================
       const KANA_DATA = {
         seion: [
@@ -1033,7 +1195,7 @@
       });
 
       // =======================================================================
-      // 6. ZEN-TTS MARINE v1.3.0 MODULE ENGINE (Giữ nguyên cơ chế tải mô-đun)
+      // 7. ZEN-TTS MARINE v1.3.0 MODULE ENGINE
       // =======================================================================
       const ZEN_REMOTE_FILES = {
         marineZtm: 'https://tts-models.zenryoku.work/v1.3.0/marine.ztm',
@@ -1273,9 +1435,7 @@
         const request = audioRequest;
 
         if (!zenInstance) {
-          if (customPrefs.fallbackWebSpeech && speakFallbackWebSpeech(text, customPrefs.zenSpeed)) {
-            return;
-          }
+          if (customPrefs.fallbackWebSpeech && speakFallbackWebSpeech(text, customPrefs.zenSpeed)) return;
           showToast(zenLoadPromise ? 'Đang nạp ZEN-TTS Marine...' : 'Hãy nạp ZEN-TTS Marine trong mục 🎧 hoặc 📦 Mô-đun để nghe.');
           return;
         }
@@ -1323,7 +1483,7 @@
       }
 
       // =======================================================================
-      // 7. GOOGLE SHEETS & CSV / JSON PARSER (13 CỘT CHUẨN)
+      // 8. GOOGLE SHEETS AUTO-SYNC & CSV PARSER
       // =======================================================================
       function extractGoogleSheetId(input) {
         const str = String(input || '').trim();
@@ -1333,7 +1493,6 @@
         return '';
       }
 
-      // RFC-4180 CSV parser (xử lý chuẩn dấu phẩy & xuống dòng bên trong dấu ngoặc kép)
       function parseCSV(text) {
         const rows = [];
         let row = [];
@@ -1344,29 +1503,19 @@
         for (let i = 0; i < clean.length; i++) {
           const ch = clean[i];
           if (inQuotes) {
-            if (ch === '"' && clean[i + 1] === '"') {
-              field += '"';
-              i++;
-            } else if (ch === '"') {
-              inQuotes = false;
-            } else {
-              field += ch;
-            }
+            if (ch === '"' && clean[i + 1] === '"') { field += '"'; i++; }
+            else if (ch === '"') inQuotes = false;
+            else field += ch;
           } else {
-            if (ch === '"') {
-              inQuotes = true;
-            } else if (ch === ',') {
-              row.push(field.trim());
-              field = '';
-            } else if (ch === '\r' || ch === '\n') {
+            if (ch === '"') inQuotes = true;
+            else if (ch === ',') { row.push(field.trim()); field = ''; }
+            else if (ch === '\r' || ch === '\n') {
               if (ch === '\r' && clean[i + 1] === '\n') i++;
               row.push(field.trim());
               if (row.some(cell => cell !== '')) rows.push(row);
               row = [];
               field = '';
-            } else {
-              field += ch;
-            }
+            } else field += ch;
           }
         }
         row.push(field.trim());
@@ -1377,7 +1526,6 @@
       function mapSheetRowsToWords(rows, fallbackLevel = 'N5') {
         if (!rows || rows.length < 2) return [];
         const headers = rows[0].map(h => h.toLowerCase().normalize('NFC').trim());
-
         const findCol = (patterns) => headers.findIndex(h => patterns.some(p => h === p || h.includes(p)));
         const idx = {
           id: findCol(['id']),
@@ -1399,7 +1547,6 @@
         for (let r = 1; r < rows.length; r++) {
           const cols = rows[r];
           const get = (i) => (i >= 0 && cols[i] !== undefined ? String(cols[i]).trim() : '');
-
           const kanji = get(idx.kanji);
           const kana = get(idx.kana) || get(idx.furigana).replace(/\[[^\]]*\]/g, '');
           const furigana = get(idx.furigana) || kana || kanji;
@@ -1413,9 +1560,7 @@
           const exJa = get(idx.exJa);
 
           words.push({
-            id,
-            level,
-            kanji,
+            id, level, kanji,
             kana: kana || displayWord,
             furigana,
             romaji: get(idx.romaji),
@@ -1429,30 +1574,30 @@
         return words;
       }
 
-      async function syncFromGoogleSheets() {
-        const rawUrl = $('sheetUrlInput').value.trim();
+      async function syncFromGoogleSheets({ silent = false } = {}) {
+        const rawUrl = $('sheetUrlInput').value.trim() || safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL);
         const sheetId = extractGoogleSheetId(rawUrl);
         if (!sheetId) {
-          showToast('Hãy dán đúng link Google Sheets (chứa /spreadsheets/d/...)', 'error');
-          return;
+          if (!silent) showToast('Hãy dán đúng link Google Sheets (chứa /spreadsheets/d/...)', 'error');
+          return false;
         }
         const selectedLevels = Array.from(document.querySelectorAll('.sheet-lvl:checked')).map(el => el.value);
-        if (!selectedLevels.length) {
-          showToast('Hãy chọn ít nhất 1 Sheet (N5, N4, N3...)', 'error');
-          return;
-        }
+        const levelsToFetch = selectedLevels.length ? selectedLevels : (state.prefs.sheetLevels || ['N5', 'N4', 'N3']);
 
         safeSetLS(STORAGE_SHEET_KEY, rawUrl);
+        state.prefs.sheetLevels = levelsToFetch;
+        savePrefs();
+
         const btn = $('btnSyncGoogleSheet');
-        btn.disabled = true;
-        $('badgeSheetStatus').textContent = 'Đang tải...';
+        if (!silent) btn.disabled = true;
+        $('badgeSheetStatus').textContent = silent ? 'Đang kiểm tra nền...' : 'Đang tải...';
 
         try {
           const allWords = [];
           const loadedSheets = [];
-          for (const sheetName of selectedLevels) {
+          for (const sheetName of levelsToFetch) {
             const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
-            const resp = await fetchWithTimeout(csvUrl, {}, 30000);
+            const resp = await fetchWithTimeout(csvUrl, {}, 25000);
             if (!resp.ok) continue;
             const csvText = await resp.text();
             if (csvText.trim().startsWith('<!DOCTYPE') || csvText.includes('<html')) {
@@ -1469,30 +1614,37 @@
             throw new Error('Không đọc được dòng từ vựng nào. Kiểm tra lại tên Sheet (N5, N4, N3) hoặc quyền chia sẻ.');
           }
 
+          const prevCount = state.words.length;
+          const prevFingerprint = `${state.words.length}:${state.words[0]?.id}:${state.words[state.words.length - 1]?.id}`;
+          const nextFingerprint = `${allWords.length}:${allWords[0]?.id}:${allWords[allWords.length - 1]?.id}`;
+
           await applyDataset({
-            meta: { title: `Google Sheets · ${loadedSheets.join(', ')}`, source: 'sheets', sheetId },
+            meta: { title: `Google Sheets · ${loadedSheets.join(', ')}`, source: 'sheets', sheetId, syncedAt: Date.now() },
             words: allWords
-          }, true);
-          $('badgeSheetStatus').textContent = `Đã đồng bộ ${allWords.length} từ`;
-          showToast(`Đã đồng bộ ${allWords.length} từ từ Google Sheets!`, 'success');
+          }, true, silent);
+
+          $('badgeSheetStatus').textContent = `Tự đồng bộ (${allWords.length} từ)`;
+          if (!silent) {
+            showToast(`Đã đồng bộ ${allWords.length} từ từ Google Sheets!`, 'success');
+          } else if (prevFingerprint !== nextFingerprint || prevCount === SAMPLE_DATASET.words.length) {
+            showToast(`🔄 Đã tự cập nhật ${allWords.length} từ từ Google Sheets!`, 'success');
+          }
+          return true;
         } catch (err) {
-          $('badgeSheetStatus').textContent = 'Lỗi đồng bộ';
-          showToast(err.message, 'error');
+          $('badgeSheetStatus').textContent = silent ? 'Dùng bản đã lưu' : 'Lỗi đồng bộ';
+          if (!silent) showToast(err.message, 'error');
+          return false;
         } finally {
-          btn.disabled = false;
+          if (!silent) btn.disabled = false;
         }
       }
 
       // =======================================================================
-      // 8. FURIGANA RUBY & TAP-TO-TRANSLATE ENGINE
+      // 9. FURIGANA RUBY & TAP-TO-TRANSLATE ENGINE
       // =======================================================================
       function buildDictionaryIndex() {
         const idx = new Map();
-        // 1. Nạp từ điển mini (trợ từ & từ thông dụng)
-        Object.entries(BUILTIN_MINI_DICT).forEach(([k, v]) => {
-          idx.set(k, { text: k, ...v });
-        });
-        // 2. Nạp toàn bộ từ vựng từ Google Sheets (ưu tiên cao nhất!)
+        Object.entries(BUILTIN_MINI_DICT).forEach(([k, v]) => idx.set(k, { text: k, ...v }));
         state.words.forEach(w => {
           const entry = {
             text: w.kanji || w.kana,
@@ -1505,17 +1657,14 @@
           if (w.kanji) idx.set(w.kanji, entry);
           if (w.kana && !idx.has(w.kana)) idx.set(w.kana, entry);
 
-          // Tách chữ Kanji đơn lẻ từ cột Furigana dạng 自[じ]分[ぶん] để ấn từng chữ cũng có nghĩa & âm đọc!
           if (w.furigana && w.furigana.includes('[')) {
             const parts = [...w.furigana.matchAll(/(\p{Script=Han}+)\[([^\]]+)\]/gu)];
             const hvParts = w.hanViet ? w.hanViet.split(/\s+/) : [];
             parts.forEach((m, i) => {
-              const kChar = m[1];
-              const kRead = m[2];
+              const kChar = m[1], kRead = m[2];
               if (kChar.length === 1 && !idx.has(kChar)) {
                 idx.set(kChar, {
-                  text: kChar,
-                  reading: kRead,
+                  text: kChar, reading: kRead,
                   hanViet: hvParts[i] || w.hanViet || '',
                   meaning: `Trong từ "${w.kanji}" (${w.meaning})`,
                   level: w.level,
@@ -1530,24 +1679,14 @@
 
       function lookupToken(token, parentWord = null) {
         if (state.dictIndex.has(token)) return state.dictIndex.get(token);
-        // Nếu là Kanji đơn nằm trong từ hiện tại
         if (parentWord && (parentWord.kanji || '').includes(token)) {
           return {
-            text: token,
-            reading: parentWord.kana,
-            hanViet: parentWord.hanViet || '',
-            meaning: parentWord.meaning,
-            level: parentWord.level,
+            text: token, reading: parentWord.kana, hanViet: parentWord.hanViet || '',
+            meaning: parentWord.meaning, level: parentWord.level,
             note: `Thuộc từ: ${parentWord.kanji} (${parentWord.kana})`
           };
         }
-        return {
-          text: token,
-          reading: token,
-          hanViet: '',
-          meaning: 'Chưa có trong từ điển hiện tại',
-          note: 'Ấn nút 🔊 để nghe cách phát âm'
-        };
+        return { text: token, reading: token, hanViet: '', meaning: 'Chưa có trong từ điển hiện tại', note: 'Ấn nút 🔊 để nghe cách phát âm' };
       }
 
       function showTranslateSheet(token, parentWord = null) {
@@ -1570,27 +1709,21 @@
         document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
       }
 
-      // Render mặt trước thẻ: hỗ trợ chuẩn Ruby `お願[ねが]いします` và ấn từng chữ để dịch
       function renderCardWordWithRuby(containerEl, word) {
         containerEl.innerHTML = '';
         containerEl.classList.toggle('hide-furi', !state.prefs.showFuri);
         const furiStr = word.furigana || '';
 
         if (furiStr.includes('[')) {
-          // Phân tách dạng: お + 願[ねが] + いします
           const regex = /([^\[\]]+?)\[([^\]]+)\]|([^\[\]]+)/g;
           let match;
           while ((match = regex.exec(furiStr)) !== null) {
             if (match[1] && match[2]) {
-              // Tách phần tiền tố kana trước Kanji nếu có (VD: お願[ねが] -> お + 願[ねが])
-              const base = match[1];
-              const rt = match[2];
+              const base = match[1], rt = match[2];
               const kanjiStart = base.search(/\p{Script=Han}/u);
               if (kanjiStart > 0) {
-                const prefix = base.slice(0, kanjiStart);
-                const kPart = base.slice(kanjiStart);
-                containerEl.appendChild(createTapSpan(prefix, word.kanji || word.kana, word, false));
-                containerEl.appendChild(createRubyTapToken(kPart, rt, word));
+                containerEl.appendChild(createTapSpan(base.slice(0, kanjiStart), word.kanji || word.kana, word, false));
+                containerEl.appendChild(createRubyTapToken(base.slice(kanjiStart), rt, word));
               } else {
                 containerEl.appendChild(createRubyTapToken(base, rt, word));
               }
@@ -1600,7 +1733,6 @@
           }
           $('fcFurigana').textContent = '';
         } else {
-          // Từ không có dấu ngoặc (VD: thuần Hiragana/Katakana hoặc JSON cũ)
           const display = word.kanji || word.kana;
           Array.from(display).forEach(ch => {
             const isKanji = /\p{Script=Han}/u.test(ch);
@@ -1616,7 +1748,6 @@
         const ruby = document.createElement('ruby');
         ruby.className = 'tap-token mx-[1px]';
         ruby.innerHTML = `${escapeHtml(baseText)}<rt>${escapeHtml(rtText)}</rt>`;
-        ruby.title = `Ấn để tra "${baseText}"`;
         ruby.onclick = (e) => {
           e.stopPropagation();
           document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
@@ -1639,7 +1770,6 @@
         return span;
       }
 
-      // Tách câu ví dụ tiếng Nhật bằng thuật toán Longest-Match dựa trên chính kho từ điển đã nạp
       function tokenizeJapaneseSentence(sentence) {
         const tokens = [];
         let i = 0;
@@ -1654,25 +1784,19 @@
           const maxLen = Math.min(8, sentence.length - i);
           for (let len = maxLen; len >= 1; len--) {
             const sub = sentence.slice(i, i + len);
-            if (state.dictIndex.has(sub)) {
-              matched = sub;
-              break;
-            }
+            if (state.dictIndex.has(sub)) { matched = sub; break; }
           }
           if (matched) {
             tokens.push({ text: matched, punct: false });
             i += matched.length;
+          } else if (/^[\u30A0-\u30FFー]$/.test(ch)) {
+            let end = i + 1;
+            while (end < sentence.length && /^[\u30A0-\u30FFー]$/.test(sentence[end])) end++;
+            tokens.push({ text: sentence.slice(i, end), punct: false });
+            i = end;
           } else {
-            // Gom các ký tự Katakana liên tiếp thành 1 từ
-            if (/^[\u30A0-\u30FFー]$/.test(ch)) {
-              let end = i + 1;
-              while (end < sentence.length && /^[\u30A0-\u30FFー]$/.test(sentence[end])) end++;
-              tokens.push({ text: sentence.slice(i, end), punct: false });
-              i = end;
-            } else {
-              tokens.push({ text: ch, punct: false });
-              i++;
-            }
+            tokens.push({ text: ch, punct: false });
+            i++;
           }
         }
         return tokens;
@@ -1680,16 +1804,11 @@
 
       function renderInteractiveExample(containerEl, sentence, parentWord) {
         containerEl.innerHTML = '';
-        const tokens = tokenizeJapaneseSentence(sentence);
-        tokens.forEach(tk => {
-          if (tk.punct) {
-            containerEl.appendChild(document.createTextNode(tk.text));
-            return;
-          }
-          const hasEntry = state.dictIndex.has(tk.text);
+        tokenizeJapaneseSentence(sentence).forEach(tk => {
+          if (tk.punct) { containerEl.appendChild(document.createTextNode(tk.text)); return; }
           const span = document.createElement('span');
           span.textContent = tk.text;
-          span.className = hasEntry ? 'tap-token mx-[1px]' : 'tap-token border-transparent hover:border-[#FF8FA3]';
+          span.className = state.dictIndex.has(tk.text) ? 'tap-token mx-[1px]' : 'tap-token border-transparent hover:border-[#FF8FA3]';
           span.onclick = (e) => {
             e.stopPropagation();
             document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
@@ -1701,7 +1820,7 @@
       }
 
       // =======================================================================
-      // 9. DATASET MANAGEMENT & FILTERING
+      // 10. DATASET MANAGEMENT, FILTERING & SESSION BUILDING
       // =======================================================================
       async function applyDataset(dataset, persist = true, preservePrefs = false) {
         if (persist) await saveDatasetToIDB(dataset);
@@ -1715,8 +1834,7 @@
         state.wordMap = new Map(state.words.map(w => [w.id, w]));
         buildDictionaryIndex();
 
-        const hasCurrentLevel = state.words.some(w => w.level === state.prefs.level);
-        if (!hasCurrentLevel && state.words.length > 0) {
+        if (!state.words.some(w => w.level === state.prefs.level) && state.words.length > 0) {
           const first = LEVELS.find(lvl => state.words.some(w => w.level === lvl));
           if (first) state.prefs.level = first;
         }
@@ -1730,15 +1848,10 @@
         events.emit('dataset:loaded', { count: state.words.length, title: state.datasetTitle });
       }
 
-      function getFilteredWords(ignoreFcFilter = false) {
+      function getBasePool() {
         return state.words.filter(w => {
           if (w.level !== state.prefs.level) return false;
           if (state.prefs.topic !== 'ALL' && w.topic !== state.prefs.topic) return false;
-          if (!ignoreFcFilter) {
-            const isMastered = state.progress.masteredIds.has(w.id);
-            if (state.prefs.fcFilter === 'MASTERED' && !isMastered) return false;
-            if (state.prefs.fcFilter === 'UNMASTERED' && isMastered) return false;
-          }
           return true;
         });
       }
@@ -1757,8 +1870,38 @@
         state.prefs.topic = sel.value;
       }
 
+      function rebuildFlashcardDeck(shuffle = false) {
+        cancelCardMove();
+        const now = Date.now();
+        const pool = getBasePool();
+        const dueList = pool.filter(w => isWordDue(w.id, now)).sort((a, b) => (getWordStat(a.id)?.nextReviewAt || 0) - (getWordStat(b.id)?.nextReviewAt || 0));
+        const newList = pool.filter(w => isWordNew(w.id));
+
+        let deck = [];
+        if (state.prefs.fcFilter === 'SMART') {
+          deck = [...dueList, ...newList];
+        } else if (state.prefs.fcFilter === 'DUE') {
+          deck = dueList;
+        } else if (state.prefs.fcFilter === 'NEW') {
+          deck = newList;
+        } else {
+          deck = pool;
+        }
+
+        const limit = Number(state.prefs.sessionSize) || 0;
+        if (limit > 0 && state.prefs.fcFilter !== 'ALL') {
+          deck = deck.slice(0, limit);
+        }
+        if (shuffle) deck = shuffled(deck);
+
+        state.fcDeck = deck;
+        state.fcIndex = 0;
+        state.fcFlipped = false;
+        state.sessionStats = { reviewed: 0, good: 0, again: 0 };
+      }
+
       // =======================================================================
-      // 10. RENDER HEADER, FLASHCARD, MATCHING, KANA (CARD + GRID), DATA
+      // 11. RENDER VIEWS
       // =======================================================================
       function renderHeader() {
         $('headerDatasetLabel').textContent = state.words.length
@@ -1775,12 +1918,13 @@
         const showStatus = (state.mode === 'flashcard' || state.mode === 'matching') && state.words.length > 0;
         $('studyStatusBar').classList.toggle('hidden', !showStatus);
 
+        const now = Date.now();
         const pillsEl = $('levelPills');
         pillsEl.innerHTML = '';
         LEVELS.forEach(lvl => {
           const lvlWords = state.words.filter(w => w.level === lvl);
-          const masteredCount = lvlWords.filter(w => state.progress.masteredIds.has(w.id)).length;
-          const pct = lvlWords.length ? Math.round((masteredCount / lvlWords.length) * 100) : 0;
+          const learnedCount = lvlWords.filter(w => isWordLearned(w.id)).length;
+          const pct = lvlWords.length ? Math.round((learnedCount / lvlWords.length) * 100) : 0;
           const active = state.prefs.level === lvl;
           const btn = document.createElement('button');
           btn.type = 'button';
@@ -1802,26 +1946,19 @@
         });
 
         const curWords = state.words.filter(w => w.level === state.prefs.level);
-        const curMastered = curWords.filter(w => state.progress.masteredIds.has(w.id)).length;
-        const curPct = curWords.length ? Math.round((curMastered / curWords.length) * 100) : 0;
+        const curLearned = curWords.filter(w => isWordLearned(w.id)).length;
+        const curDue = curWords.filter(w => isWordDue(w.id, now)).length;
+        const curPct = curWords.length ? Math.round((curLearned / curWords.length) * 100) : 0;
         $('levelProgressFill').style.width = `${curPct}%`;
-        $('levelProgressText').textContent = `JLPT ${state.prefs.level} — ${curMastered}/${curWords.length} thuộc`;
+        $('levelProgressText').textContent = curDue > 0
+          ? `${state.prefs.level}: ${curLearned}/${curWords.length} · 🔔 ${curDue} cần ôn`
+          : `${state.prefs.level}: ${curLearned}/${curWords.length} đã học`;
 
         const furiOn = state.prefs.showFuri;
         $('furiToggleBtn').className = furiOn
           ? 'px-2.5 py-1.5 rounded-xl text-xs font-extrabold border border-[#FF8FA3] bg-peach-50 text-[#FB6F92] transition-all flex items-center gap-1.5 shrink-0'
           : 'px-2.5 py-1.5 rounded-xl text-xs font-bold border border-[#E8DFD6] bg-white text-[#8C7F7A] transition-all flex items-center gap-1.5 shrink-0';
         $('furiDot').className = furiOn ? 'w-2 h-2 rounded-full bg-[#FB6F92]' : 'w-2 h-2 rounded-full bg-[#D1C7BF]';
-      }
-
-      // --- Flashcard 3D ---
-      function rebuildFlashcardDeck(shuffle = false) {
-        cancelCardMove();
-        let deck = getFilteredWords(false);
-        if (shuffle) deck = shuffled(deck);
-        state.fcDeck = deck;
-        state.fcIndex = 0;
-        state.fcFlipped = false;
       }
 
       function getRelatedWords(word) {
@@ -1840,30 +1977,59 @@
       }
 
       function renderFlashcard() {
+        const now = Date.now();
+        const pool = getBasePool();
+        const dueTotal = pool.filter(w => isWordDue(w.id, now)).length;
+        const newTotal = pool.filter(w => isWordNew(w.id)).length;
+        $('dueCountBadge').textContent = dueTotal;
+        $('newCountBadge').textContent = newTotal;
+        $('sessionSizeSelect').value = String(state.prefs.sessionSize);
+
         document.querySelectorAll('.fc-filter-btn').forEach(btn => {
           const active = btn.dataset.filter === state.prefs.fcFilter;
           btn.className = active
-            ? 'fc-filter-btn px-3 py-1 rounded-xl transition bg-white text-[#332E2E] shadow-sm'
-            : 'fc-filter-btn px-3 py-1 rounded-xl transition text-[#786D69]';
+            ? 'fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap bg-white text-[#FB6F92] shadow-sm font-extrabold'
+            : 'fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap text-[#786D69]';
         });
 
         const total = state.fcDeck.length;
-        ['fcPrevBtn', 'fcNextBtn', 'fcMasterBtn', 'fcUnmasterBtn', 'fcShuffleBtn'].forEach(id => { $(id).disabled = !total; });
+        ['fcPrevBtn', 'fcNextBtn', 'fcRateAgainBtn', 'fcRateHardBtn', 'fcRateGoodBtn', 'fcShuffleBtn'].forEach(id => { $(id).disabled = !total; });
         $('fcCounter').textContent = total ? `${state.fcIndex + 1} / ${total}` : '0 / 0';
 
         if (!total) {
           $('fcPerspective').classList.add('hidden');
           $('fcEmptyFilter').classList.remove('hidden');
+          const didStudy = state.sessionStats.reviewed > 0;
+          $('fcSessionSummary').classList.toggle('hidden', !didStudy);
+          if (didStudy) {
+            $('fcEmptyIcon').textContent = '🎉';
+            $('fcEmptyTitle').textContent = 'Hoàn thành phiên học xuất sắc!';
+            $('fcEmptyDesc').textContent = dueTotal + newTotal > 0
+              ? `Còn ${dueTotal} từ cần ôn và ${newTotal} từ mới trong mục này. Bạn muốn học tiếp phiên mới không?`
+              : 'Tuyệt vời! Bạn đã xử lý hết toàn bộ từ cần ôn và từ mới ở mục này hôm nay.';
+            $('sumReviewed').textContent = state.sessionStats.reviewed;
+            $('sumGood').textContent = state.sessionStats.good;
+            $('sumAgain').textContent = state.sessionStats.again;
+          } else {
+            $('fcEmptyIcon').textContent = '✨';
+            $('fcEmptyTitle').textContent = state.prefs.fcFilter === 'DUE' ? 'Chưa có từ nào đến hạn ôn!' : 'Không có từ nào trong mục này!';
+            $('fcEmptyDesc').textContent = 'Bạn có thể chuyển sang "🎯 Phiên học" để học từ mới hoặc bấm "Xem tất cả từ".';
+          }
+          $('btnStartNextSession').classList.toggle('hidden', dueTotal + newTotal === 0);
           return;
         }
+
         $('fcPerspective').classList.remove('hidden');
         $('fcEmptyFilter').classList.add('hidden');
 
         const word = state.fcDeck[state.fcIndex];
+        const srsInfo = getWordSrsInfo(word.id, now);
         $('fcInner').classList.toggle('is-flipped', state.fcFlipped);
         $('fcLevelBadge').textContent = word.level;
+        $('fcSrsBadge').textContent = srsInfo.label;
+        $('fcSrsBadge').className = `px-2.5 py-1 rounded-xl text-[11px] font-extrabold shrink-0 ${srsInfo.badgeClass}`;
         $('fcTopicBadge').textContent = word.topic || 'Chung';
-        $('fcMasteredBadge').classList.toggle('hidden', !state.progress.masteredIds.has(word.id));
+        $('fcGoodIntervalHint').textContent = `Ôn ${srsInfo.nextGoodDays} ngày`;
 
         renderCardWordWithRuby($('fcKanji'), word);
         $('fcRomaji').textContent = state.prefs.showFuri && word.romaji ? `/${word.romaji}/` : '';
@@ -1949,34 +2115,37 @@
         }, 140);
       }
 
-      function markFlashcard(mastered) {
+      function handleFlashcardRating(rating) {
         if (!state.fcDeck.length) return;
         cancelCardMove();
         stopAudio();
         hideTranslateSheet();
-        const oldIdx = state.fcIndex;
+
         const word = state.fcDeck[state.fcIndex];
-        if (mastered) {
-          state.progress.masteredIds.add(word.id);
-          showToast(`Đã thuộc "${word.kanji || word.kana}" 🎉`, 'success');
+        const next = rateWordSrs(word.id, rating);
+        state.sessionStats.reviewed += 1;
+        if (rating === 'again') {
+          state.sessionStats.again += 1;
+          showToast(`Sẽ nhắc lại "${word.kanji || word.kana}" ở cuối phiên!`, 'info');
         } else {
-          state.progress.masteredIds.delete(word.id);
+          state.sessionStats.good += 1;
+          showToast(`Đã lưu lịch ôn "${word.kanji || word.kana}" sau ${next.intervalDays} ngày ✅`, 'success');
         }
-        saveProgress();
-        events.emit('word:mastered', { word, mastered });
+        events.emit('word:rated', { word, rating, stat: next });
 
         if (state.prefs.fcFilter !== 'ALL') {
-          rebuildFlashcardDeck();
-          state.fcIndex = state.fcDeck.length ? oldIdx % state.fcDeck.length : 0;
+          state.fcDeck.splice(state.fcIndex, 1);
+          if (rating === 'again') state.fcDeck.push(word);
+          if (state.fcIndex >= state.fcDeck.length) state.fcIndex = 0;
         } else {
           state.fcIndex = (state.fcIndex + 1) % state.fcDeck.length;
-          state.fcFlipped = false;
         }
+        state.fcFlipped = false;
         renderHeader();
         renderFlashcard();
       }
 
-      // --- Pair Matching (Nối từ 2 ngôn ngữ) ---
+      // --- Pair Matching ---
       function initMatchingRound() {
         clearTimeout(matchErrorTimer);
         matchErrorTimer = null;
@@ -1984,16 +2153,15 @@
         state.matchSelected = null;
         state.matchErrors = null;
         state.matchLocked = false;
-        const pool = getFilteredWords(true);
+        const pool = getBasePool();
         if (!pool.length) {
-          state.matchRoundPairs = [];
-          state.matchLeftItems = [];
-          state.matchRightItems = [];
+          state.matchRoundPairs = []; state.matchLeftItems = []; state.matchRightItems = [];
           return;
         }
-        const unmastered = pool.filter(w => !state.progress.masteredIds.has(w.id));
-        const mastered = pool.filter(w => state.progress.masteredIds.has(w.id));
-        const chosen = [...shuffled(unmastered), ...shuffled(mastered)].slice(0, Math.min(5, pool.length));
+        const now = Date.now();
+        const priority = pool.filter(w => isWordDue(w.id, now) || isWordNew(w.id));
+        const rest = pool.filter(w => !isWordDue(w.id, now) && !isWordNew(w.id));
+        const chosen = [...shuffled(priority), ...shuffled(rest)].slice(0, Math.min(5, pool.length));
         state.matchRoundPairs = chosen;
         state.matchLeftItems = shuffled(chosen);
         state.matchRightItems = shuffled(chosen);
@@ -2036,7 +2204,6 @@
             const showFuri = state.prefs.showFuri && word.kanji && word.kana && word.kanji !== word.kana;
             btn.innerHTML = `<span class="font-jp text-lg sm:text-xl font-extrabold leading-tight">${escapeHtml(display)}</span>${showFuri ? `<span class="font-jp text-[11px] font-bold text-[#FB6F92] mt-0.5">${escapeHtml(word.kana)}</span>` : ''}`;
           } else {
-            // Rút gọn nghĩa quá dài trong ô ghép cặp
             const shortMeaning = word.meaning.split('(')[0].trim() || word.meaning;
             btn.innerHTML = `<span class="text-xs sm:text-sm font-extrabold leading-snug line-clamp-2">${escapeHtml(shortMeaning)}</span>`;
           }
@@ -2053,14 +2220,10 @@
         if (isJapanese) speakWord(word);
 
         if (state.matchSelected && state.matchSelected.side === side && state.matchSelected.id === word.id) {
-          state.matchSelected = null;
-          renderMatching();
-          return;
+          state.matchSelected = null; renderMatching(); return;
         }
         if (!state.matchSelected || state.matchSelected.side === side) {
-          state.matchSelected = { side, id: word.id };
-          renderMatching();
-          return;
+          state.matchSelected = { side, id: word.id }; renderMatching(); return;
         }
 
         const first = state.matchSelected;
@@ -2080,15 +2243,13 @@
           renderMatching();
           matchErrorTimer = setTimeout(() => {
             matchErrorTimer = null;
-            state.matchSelected = null;
-            state.matchErrors = null;
-            state.matchLocked = false;
+            state.matchSelected = null; state.matchErrors = null; state.matchLocked = false;
             renderMatching();
           }, 420);
         }
       }
 
-      // --- Kana Alphabet (Flashcard 3D + Grid) ---
+      // --- Kana (Flashcard 3D + Grid) ---
       function rebuildKanaDeck(shuffle = false) {
         const items = (KANA_DATA[state.prefs.kanaGroup] || KANA_DATA.seion).filter(Boolean);
         state.kanaDeck = shuffle ? shuffled(items) : items;
@@ -2196,19 +2357,21 @@
         }, 140);
       }
 
-      // --- Data Stats ---
       function renderDataStats() {
+        const now = Date.now();
         const grid = $('dataStatsGrid');
         grid.innerHTML = '';
         LEVELS.forEach(lvl => {
           const words = state.words.filter(w => w.level === lvl);
-          const mastered = words.filter(w => state.progress.masteredIds.has(w.id)).length;
+          const learned = words.filter(w => isWordLearned(w.id)).length;
+          const due = words.filter(w => isWordDue(w.id, now)).length;
           const card = document.createElement('div');
           card.className = 'rounded-2xl bg-[#FFFDF9] border border-[#F1ECE6] p-3 text-center';
           card.innerHTML = `
             <p class="text-xs font-extrabold text-[#FB6F92]">${lvl}</p>
             <p class="text-lg font-extrabold text-[#332E2E]">${words.length} <span class="text-xs font-semibold text-[#8C7F7A]">từ</span></p>
-            <p class="text-[11px] font-bold text-matcha-600">${mastered} đã thuộc</p>
+            <p class="text-[11px] font-bold text-matcha-600">${learned} đã học</p>
+            <p class="text-[10px] font-bold ${due > 0 ? 'text-[#E11D48]' : 'text-[#9C8F8A]'}">${due > 0 ? `🔔 ${due} cần ôn` : 'Đã ôn hết'}</p>
           `;
           grid.appendChild(card);
         });
@@ -2221,7 +2384,6 @@
         $('kanaView').classList.toggle('hidden', state.mode !== 'kana');
         $('dataView').classList.toggle('hidden', state.mode !== 'data');
 
-        // Ẩn/hiện các plugin module đăng ký thêm
         registeredModules.forEach((mod, id) => {
           mod.sectionEl.classList.toggle('hidden', state.mode !== id);
           if (state.mode === id && typeof mod.render === 'function') {
@@ -2236,11 +2398,10 @@
       }
 
       // =======================================================================
-      // 11. PLUGIN EXTENSION API (Viết thêm file JS mới để mở rộng tính năng)
+      // 12. PLUGIN EXTENSION API (window.KawaiiApp)
       // =======================================================================
       function registerModule({ id, label, icon = '✨', mount, render }) {
         if (!id || registeredModules.has(id)) return;
-        // 1. Tạo nút tab trên thanh điều hướng
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.dataset.mode = id;
@@ -2248,16 +2409,12 @@
         btn.className = 'mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1';
         btn.innerHTML = `<span>${escapeHtml(icon)}</span><span class="hidden md:inline">${escapeHtml(label)}</span>`;
         btn.onclick = () => {
-          cancelCardMove();
-          stopAudio();
-          hideTranslateSheet();
-          state.mode = id;
-          renderAll();
+          cancelCardMove(); stopAudio(); hideTranslateSheet();
+          state.mode = id; renderAll();
           events.emit('mode:changed', { mode: id });
         };
         $('modeNav').appendChild(btn);
 
-        // 2. Tạo vùng hiển thị section mới
         const sectionEl = document.createElement('section');
         sectionEl.id = `pluginView_${id}`;
         sectionEl.className = 'hidden flex-1 flex flex-col gap-4 animate-pop';
@@ -2268,64 +2425,43 @@
         renderHeader();
       }
 
-      // Expose global API cho phép viết thêm file .js ngoài để mở rộng
       window.KawaiiApp = {
-        version: '2.0.0',
+        version: '3.0.0',
         state,
         events,
         registerModule,
-        getFilteredWords,
+        getBasePool,
         applyDataset,
         renderAll,
         showToast,
-        tts: {
-          speak: speakJapaneseText,
-          speakWord,
-          speakKana: speakKanaItem,
-          stop: stopAudio,
-          initMarine: initZenTtsFromCacheOrNetwork
-        },
-        dict: {
-          lookup: lookupToken,
-          tokenize: tokenizeJapaneseSentence,
-          showPopup: showTranslateSheet,
-          hidePopup: hideTranslateSheet
-        }
+        srs: { getWordStat, getWordSrsInfo, rateWordSrs, isWordDue, isWordNew, isWordLearned },
+        tts: { speak: speakJapaneseText, speakWord, speakKana: speakKanaItem, stop: stopAudio, initMarine: initZenTtsFromCacheOrNetwork },
+        dict: { lookup: lookupToken, tokenize: tokenizeJapaneseSentence, showPopup: showTranslateSheet, hidePopup: hideTranslateSheet }
       };
 
       // =======================================================================
-      // 12. EVENT BINDINGS
+      // 13. EVENT BINDINGS
       // =======================================================================
       document.querySelectorAll('.mode-tab').forEach(btn => {
         btn.onclick = () => {
-          cancelCardMove();
-          stopAudio();
-          hideTranslateSheet();
-          state.mode = btn.dataset.mode;
-          renderAll();
+          cancelCardMove(); stopAudio(); hideTranslateSheet();
+          state.mode = btn.dataset.mode; renderAll();
           events.emit('mode:changed', { mode: state.mode });
         };
       });
 
       $('topicSelect').onchange = (e) => {
-        state.prefs.topic = e.target.value;
-        savePrefs();
-        rebuildFlashcardDeck();
-        initMatchingRound();
-        renderAll();
+        state.prefs.topic = e.target.value; savePrefs();
+        rebuildFlashcardDeck(); initMatchingRound(); renderAll();
       };
 
       $('furiToggleBtn').onclick = () => {
-        state.prefs.showFuri = !state.prefs.showFuri;
-        savePrefs();
-        renderAll();
+        state.prefs.showFuri = !state.prefs.showFuri; savePrefs(); renderAll();
       };
 
-      // Translate Sheet Controls
       $('trCloseBtn').onclick = hideTranslateSheet;
       $('trSpeakBtn').onclick = () => speakJapaneseText(state.activePopupSpeakText);
 
-      // Flashcard Swipe + Click helper
       function bindSwipeAndFlip(cardEl, onFlip, onPrev, onNext, getIsBusy) {
         let startX = 0, startY = 0, dragging = false, didSwipe = false;
         cardEl.addEventListener('pointerdown', (e) => {
@@ -2373,11 +2509,20 @@
       $('fcSpeakFrontBtn').onclick = (e) => { e.stopPropagation(); speakWord(state.fcDeck[state.fcIndex]); };
       $('fcSpeakBackBtn').onclick = (e) => { e.stopPropagation(); speakWord(state.fcDeck[state.fcIndex]); };
       $('fcSpeakExBtn').onclick = (e) => { e.stopPropagation(); const w = state.fcDeck[state.fcIndex]; if (w?.example?.ja) speakJapaneseText(w.example.ja); };
-      $('fcMasterBtn').onclick = () => markFlashcard(true);
-      $('fcUnmasterBtn').onclick = () => markFlashcard(false);
+      $('fcRateAgainBtn').onclick = () => handleFlashcardRating('again');
+      $('fcRateHardBtn').onclick = () => handleFlashcardRating('hard');
+      $('fcRateGoodBtn').onclick = () => handleFlashcardRating('good');
       $('fcPrevBtn').onclick = () => moveCard(-1);
       $('fcNextBtn').onclick = () => moveCard(1);
-      $('fcShuffleBtn').onclick = () => { rebuildFlashcardDeck(true); renderFlashcard(); showToast('Đã xáo trộn thẻ!'); };
+      $('fcShuffleBtn').onclick = () => { state.fcDeck = shuffled(state.fcDeck); state.fcIndex = 0; state.fcFlipped = false; renderFlashcard(); showToast('Đã xáo trộn phiên học!'); };
+      $('btnStartNextSession').onclick = () => { rebuildFlashcardDeck(); renderFlashcard(); };
+      $('btnViewAllCards').onclick = () => { state.prefs.fcFilter = 'ALL'; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
+      $('sessionSizeSelect').onchange = (e) => {
+        state.prefs.sessionSize = Number(e.target.value) || 0;
+        savePrefs();
+        rebuildFlashcardDeck();
+        renderFlashcard();
+      };
       document.querySelectorAll('.fc-filter-btn').forEach(btn => {
         btn.onclick = () => { state.prefs.fcFilter = btn.dataset.filter; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
       });
@@ -2386,9 +2531,7 @@
       $('matchSwapBtn').onclick = () => {
         clearTimeout(matchErrorTimer);
         state.matchLocked = false; state.matchErrors = null; state.matchSelected = null;
-        state.prefs.matchSwap = !state.prefs.matchSwap;
-        savePrefs();
-        renderMatching();
+        state.prefs.matchSwap = !state.prefs.matchSwap; savePrefs(); renderMatching();
       };
       $('matchNewRoundBtn').onclick = () => { initMatchingRound(); renderMatching(); };
       $('matchNextRoundCta').onclick = () => { initMatchingRound(); renderMatching(); };
@@ -2400,16 +2543,10 @@
       $('kanaScriptKata').onclick = () => { state.prefs.kanaScript = 'kata'; savePrefs(); renderKana(); };
       $('kanaModeQuickBtn').onclick = () => {
         state.prefs.kanaReadMode = state.prefs.kanaReadMode === 'WITH_WORD' ? 'CLEAR_MORA' : 'WITH_WORD';
-        savePrefs();
-        renderKana();
+        savePrefs(); renderKana();
       };
       document.querySelectorAll('.kana-group-btn').forEach(btn => {
-        btn.onclick = () => {
-          state.prefs.kanaGroup = btn.dataset.kgroup;
-          savePrefs();
-          rebuildKanaDeck();
-          renderKana();
-        };
+        btn.onclick = () => { state.prefs.kanaGroup = btn.dataset.kgroup; savePrefs(); rebuildKanaDeck(); renderKana(); };
       });
       $('kanaFcShuffleBtn').onclick = () => { rebuildKanaDeck(true); renderKana(); showToast('Đã xáo trộn bảng chữ!'); };
       $('kanaPrevBtn').onclick = () => moveKanaCard(-1);
@@ -2426,6 +2563,9 @@
           if (e.code === 'Space') { e.preventDefault(); flipFlashcard(); }
           else if (e.code === 'ArrowRight') { e.preventDefault(); moveCard(1); }
           else if (e.code === 'ArrowLeft') { e.preventDefault(); moveCard(-1); }
+          else if (e.key === '1') handleFlashcardRating('again');
+          else if (e.key === '2') handleFlashcardRating('hard');
+          else if (e.key === '3') handleFlashcardRating('good');
           else if (e.key.toLowerCase() === 'r') speakWord(state.fcDeck[state.fcIndex]);
         } else if (state.mode === 'kana' && state.prefs.kanaView === 'card') {
           if (e.code === 'Space') { e.preventDefault(); flipKanaCard(); }
@@ -2434,8 +2574,9 @@
         }
       });
 
-      // Google Sheets, CSV, JSON & ZEN-TTS Buttons
-      $('btnSyncGoogleSheet').onclick = syncFromGoogleSheets;
+      // Data & Module Controls
+      $('btnSyncGoogleSheet').onclick = () => syncFromGoogleSheets({ silent: false });
+      $('autoSyncSheetCheck').onchange = (e) => { state.prefs.autoSyncSheet = e.target.checked; savePrefs(); };
       $('btnLoadSampleData').onclick = async () => {
         await applyDataset(SAMPLE_DATASET, true);
         showToast('Đã nạp bộ từ vựng mẫu chuẩn Sheet!', 'success');
@@ -2449,15 +2590,12 @@
           const allWords = [];
           for (const file of files) {
             const inferred = file.name.match(/(N[1-5])/i)?.[1]?.toUpperCase() || 'N5';
-            const parsed = mapSheetRowsToWords(parseCSV(await file.text()), inferred);
-            allWords.push(...parsed);
+            allWords.push(...mapSheetRowsToWords(parseCSV(await file.text()), inferred));
           }
           if (!allWords.length) throw new Error('Không đọc được từ vựng nào từ file CSV.');
           await applyDataset({ meta: { title: `CSV Sheet (${allWords.length} từ)` }, words: allWords }, true);
           showToast(`Đã nạp ${allWords.length} từ từ file CSV!`, 'success');
-        } catch (err) {
-          showToast('Lỗi đọc CSV: ' + err.message, 'error');
-        }
+        } catch (err) { showToast('Lỗi đọc CSV: ' + err.message, 'error'); }
       };
 
       $('jsonFileInput').onchange = async (e) => {
@@ -2483,9 +2621,7 @@
           })).filter(w => (w.kanji || w.kana) && w.meaning);
           await applyDataset({ meta: { title: file.name }, words }, true);
           showToast(`Đã nạp ${words.length} từ từ JSON!`, 'success');
-        } catch (err) {
-          showToast('Lỗi đọc JSON: ' + err.message, 'error');
-        }
+        } catch (err) { showToast('Lỗi đọc JSON: ' + err.message, 'error'); }
       };
 
       $('btnDownloadZenMarine').onclick = () => initZenTtsFromCacheOrNetwork(true);
@@ -2522,8 +2658,7 @@
       $('testVoiceBtn').onclick = () => speakJapaneseText('こんにちは、日本語を楽しく勉強しましょう。', getAudioFormPrefs());
       $('saveAudioModalBtn').onclick = () => {
         Object.assign(state.prefs, getAudioFormPrefs());
-        savePrefs();
-        renderAll();
+        savePrefs(); renderAll();
         $('audioModal').classList.add('hidden');
         showToast('Đã lưu cài đặt âm thanh!', 'success');
       };
@@ -2531,15 +2666,16 @@
       // Progress Export / Import / Reset
       $('btnExportProgress').onclick = () => {
         const payload = {
+          version: 3,
           exportedAt: new Date().toISOString(),
-          masteredIds: Array.from(state.progress.masteredIds),
+          wordStats: state.progress.wordStats,
           streak: state.progress.streak,
           bestStreak: state.progress.bestStreak,
           totalPairsMatched: state.progress.totalPairsMatched
         };
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
-        a.download = `kawaii-jlpt-progress-${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `kawaii-jlpt-srs-${new Date().toISOString().slice(0, 10)}.json`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -2550,21 +2686,30 @@
         if (!file) return;
         try {
           const p = JSON.parse(await file.text());
-          if (!Array.isArray(p.masteredIds)) throw new Error('File không đúng định dạng tiến độ.');
-          state.progress.masteredIds = new Set(p.masteredIds);
+          if (p.wordStats && typeof p.wordStats === 'object') {
+            state.progress.wordStats = p.wordStats;
+          } else if (Array.isArray(p.masteredIds)) {
+            const now = Date.now();
+            state.progress.wordStats = {};
+            p.masteredIds.forEach(id => {
+              state.progress.wordStats[id] = { reps: 2, intervalDays: 3, nextReviewAt: now + 3 * DAY_MS, lastReviewedAt: now, lapses: 0 };
+            });
+          } else {
+            throw new Error('File không đúng định dạng tiến độ.');
+          }
           state.progress.streak = Number(p.streak) || 0;
           state.progress.bestStreak = Number(p.bestStreak) || 0;
           state.progress.totalPairsMatched = Number(p.totalPairsMatched) || 0;
           saveProgress();
+          rebuildFlashcardDeck();
+          initMatchingRound();
           renderAll();
-          showToast('Đã khôi phục tiến độ học!', 'success');
-        } catch (err) {
-          showToast('Lỗi nhập tiến độ: ' + err.message, 'error');
-        }
+          showToast('Đã khôi phục tiến độ & lịch ôn SRS!', 'success');
+        } catch (err) { showToast('Lỗi nhập tiến độ: ' + err.message, 'error'); }
       };
       $('btnResetProgress').onclick = async () => {
-        if (!(await showConfirm('Đặt lại tiến độ?', 'Toàn bộ số từ đã thuộc và chuỗi đúng trên trình duyệt này sẽ về 0.'))) return;
-        state.progress = { masteredIds: new Set(), streak: 0, bestStreak: 0, totalPairsMatched: 0 };
+        if (!(await showConfirm('Đặt lại tiến độ?', 'Toàn bộ lịch sử học, lịch nhắc ôn SRS từng từ và chuỗi đúng sẽ về 0.'))) return;
+        state.progress = { wordStats: {}, streak: 0, bestStreak: 0, totalPairsMatched: 0 };
         saveProgress();
         rebuildFlashcardDeck();
         initMatchingRound();
@@ -2573,15 +2718,185 @@
       };
 
       // =======================================================================
-      // 13. BOOTSTRAP
+      // 14. NÉN ZIP THUẦN JS (KHÔNG CẦN THƯ VIỆN NGOÀI) & XUẤT FILE TÁCH RỜI
+      // =======================================================================
+      const CRC32_TABLE = (() => {
+        const tbl = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+          let c = i;
+          for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+          tbl[i] = c >>> 0;
+        }
+        return tbl;
+      })();
+
+      function calcCrc32(bytes) {
+        let crc = 0xFFFFFFFF;
+        for (let i = 0; i < bytes.length; i++) crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+        return (crc ^ 0xFFFFFFFF) >>> 0;
+      }
+
+      function buildZipBlob(files) {
+        const encoder = new TextEncoder();
+        const localParts = [];
+        const centralParts = [];
+        let offset = 0;
+
+        for (const file of files) {
+          const nameBytes = encoder.encode(file.name);
+          const dataBytes = encoder.encode(file.content);
+          const crc = calcCrc32(dataBytes);
+
+          const localHeader = new Uint8Array(30 + nameBytes.length);
+          const lv = new DataView(localHeader.buffer);
+          lv.setUint32(0, 0x04034b50, true);
+          lv.setUint16(4, 20, true);
+          lv.setUint16(6, 0x0800, true);
+          lv.setUint16(8, 0, true);
+          lv.setUint32(14, crc, true);
+          lv.setUint32(18, dataBytes.length, true);
+          lv.setUint32(22, dataBytes.length, true);
+          lv.setUint16(26, nameBytes.length, true);
+          localHeader.set(nameBytes, 30);
+
+          localParts.push(localHeader, dataBytes);
+
+          const cdHeader = new Uint8Array(46 + nameBytes.length);
+          const cv = new DataView(cdHeader.buffer);
+          cv.setUint32(0, 0x02014b50, true);
+          cv.setUint16(4, 20, true);
+          cv.setUint16(6, 20, true);
+          cv.setUint16(8, 0x0800, true);
+          cv.setUint16(10, 0, true);
+          cv.setUint32(16, crc, true);
+          cv.setUint32(20, dataBytes.length, true);
+          cv.setUint32(24, dataBytes.length, true);
+          cv.setUint16(28, nameBytes.length, true);
+          cv.setUint32(42, offset, true);
+          cdHeader.set(nameBytes, 46);
+          centralParts.push(cdHeader);
+
+          offset += localHeader.length + dataBytes.length;
+        }
+
+        const cdSize = centralParts.reduce((sum, p) => sum + p.length, 0);
+        const eocd = new Uint8Array(22);
+        const ev = new DataView(eocd.buffer);
+        ev.setUint32(0, 0x06054b50, true);
+        ev.setUint16(8, files.length, true);
+        ev.setUint16(10, files.length, true);
+        ev.setUint32(12, cdSize, true);
+        ev.setUint32(16, offset, true);
+
+        return new Blob([...localParts, ...centralParts, eocd], { type: 'application/zip' });
+      }
+
+      function downloadBlob(filename, blob) {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+      }
+
+      function buildSeparatedHtml() {
+        const clone = CLEAN_HTML_CLONE.cloneNode(true);
+        clone.querySelectorAll('style').forEach(styleEl => {
+          if (styleEl.id === 'appCustomStyles') {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'styles.css';
+            styleEl.replaceWith(link);
+          } else styleEl.remove();
+        });
+        const coreScript = clone.querySelector('#appCoreScript');
+        if (coreScript) {
+          const extScript = document.createElement('script');
+          extScript.src = 'app.js';
+          coreScript.replaceWith(extScript);
+        }
+        return '<!DOCTYPE html>\n' + clone.outerHTML;
+      }
+
+      const PLUGIN_SAMPLE_CODE = `/**
+ * File mẫu mở rộng tính năng cho Kawaii JLPT.
+ * Thêm <script src="plugin-sample.js"></script> ngay dưới <script src="app.js"></script> trong index.html.
+ */
+(() => {
+  if (!window.KawaiiApp) return;
+
+  window.KawaiiApp.registerModule({
+    id: 'due_list',
+    label: 'Lịch ôn',
+    icon: '📅',
+    mount(container) {
+      container.innerHTML = \`
+        <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-3">
+          <h2 class="text-base font-extrabold text-[#332E2E]">📅 Danh sách từ cần ôn hôm nay</h2>
+          <div id="pluginDueList" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+        </div>
+      \`;
+    },
+    render(container, app) {
+      const list = container.querySelector('#pluginDueList');
+      const due = app.getBasePool().filter(w => app.srs.isWordDue(w.id)).slice(0, 12);
+      if (!due.length) {
+        list.innerHTML = '<p class="text-xs text-[#8C7F7A]">Không có từ nào đến hạn ôn trong mục này 🎉</p>';
+        return;
+      }
+      list.innerHTML = due.map(w => \`
+        <button type="button" data-speak="\${w.kana || w.kanji}" class="text-left p-3 rounded-2xl bg-[#FFFDF9] border border-[#F1ECE6] hover:border-[#FF8FA3] transition">
+          <div class="font-jp font-extrabold text-base text-[#2B2626]">\${w.kanji || w.kana}</div>
+          <div class="text-xs text-[#786D69]">\${w.meaning}</div>
+        </button>
+      \`).join('');
+      list.querySelectorAll('button[data-speak]').forEach(btn => {
+        btn.onclick = () => app.tts.speak(btn.dataset.speak);
+      });
+    }
+  });
+})();
+`;
+
+      if ($('btnExportZip')) {
+        $('btnExportZip').onclick = () => {
+          const cssContent = ($('appCustomStyles')?.textContent || '').trim() + '\n';
+          const jsContent = ($('appCoreScript')?.textContent || '').trim() + '\n';
+          const zipBlob = buildZipBlob([
+            { name: 'index.html', content: buildSeparatedHtml() },
+            { name: 'styles.css', content: cssContent },
+            { name: 'app.js', content: jsContent },
+            { name: 'plugin-sample.js', content: PLUGIN_SAMPLE_CODE }
+          ]);
+          downloadBlob('kawaii-jlpt.zip', zipBlob);
+          showToast('Đã nén & tải về kawaii-jlpt.zip!', 'success');
+        };
+      }
+      if ($('btnExportHtml')) $('btnExportHtml').onclick = () => { downloadBlob('index.html', new Blob([buildSeparatedHtml()], { type: 'text/html;charset=utf-8' })); showToast('Đã tải index.html!', 'success'); };
+      if ($('btnExportCss')) $('btnExportCss').onclick = () => { downloadBlob('styles.css', new Blob([($('appCustomStyles')?.textContent || '').trim() + '\n'], { type: 'text/css;charset=utf-8' })); showToast('Đã tải styles.css!', 'success'); };
+      if ($('btnExportJs')) $('btnExportJs').onclick = () => { downloadBlob('app.js', new Blob([($('appCoreScript')?.textContent || '').trim() + '\n'], { type: 'application/javascript;charset=utf-8' })); showToast('Đã tải app.js!', 'success'); };
+      if ($('btnExportPluginSample')) $('btnExportPluginSample').onclick = () => { downloadBlob('plugin-sample.js', new Blob([PLUGIN_SAMPLE_CODE], { type: 'application/javascript;charset=utf-8' })); showToast('Đã tải plugin-sample.js!', 'success'); };
+
+      // =======================================================================
+      // 15. BOOTSTRAP (Tự nạp dữ liệu đã lưu + Tự đồng bộ ngầm Google Sheets)
       // =======================================================================
       async function bootstrap() {
         loadProgress();
         loadPrefs();
+
         const savedSheetUrl = safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL);
         if (savedSheetUrl) $('sheetUrlInput').value = savedSheetUrl;
+        $('autoSyncSheetCheck').checked = state.prefs.autoSyncSheet !== false;
+
+        const savedLevels = Array.isArray(state.prefs.sheetLevels) ? state.prefs.sheetLevels : ['N5', 'N4', 'N3'];
+        document.querySelectorAll('.sheet-lvl').forEach(cb => {
+          cb.checked = savedLevels.includes(cb.value);
+        });
 
         rebuildKanaDeck();
+
         const saved = await loadDatasetFromIDB();
         if (saved && Array.isArray(saved.words) && saved.words.length) {
           await applyDataset(saved, false, true);
@@ -2589,7 +2904,10 @@
           await applyDataset(SAMPLE_DATASET, false, true);
         }
 
-        // Tự động nạp lại ZEN-TTS Marine nếu trước đó đã lưu trong Cache trình duyệt
+        if (savedSheetUrl && state.prefs.autoSyncSheet !== false) {
+          syncFromGoogleSheets({ silent: true });
+        }
+
         initZenTtsFromCacheOrNetwork(false);
       }
 
@@ -2597,18 +2915,5 @@
       bootstrap();
     })();
   </script>
-
-  <!--
-    MỞ RỘNG TÍNH NĂNG BẰNG FILE JS RIÊNG:
-    Khi triển khai trên GitHub Pages, bạn chỉ cần thêm dòng <script src="plugins/tinh-nang-moi.js"></script>
-    và gọi:
-      window.KawaiiApp.registerModule({
-        id: 'quiz',
-        label: 'Trắc nghiệm',
-        icon: '📝',
-        mount(container, app) { ... },
-        render(container, app) { ... }
-      });
-  -->
 </body>
 </html>
