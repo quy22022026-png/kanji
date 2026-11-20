@@ -226,7 +226,7 @@ export function createPronunciation({ state, $, showToast, events, kanaMap, fetc
     } catch { return false; }
   }
 
-  async function speakText(text, customPrefs = state.prefs) {
+  async function speakText(text, customPrefs = state.prefs, profile = {}) {
     const source = String(text ?? '').trim();
     if (!source) return false;
     stop();
@@ -253,14 +253,21 @@ export function createPronunciation({ state, $, showToast, events, kanaMap, fetc
       return false;
     }
 
-    const { zenHappy: happy, zenSpeed: speed, zenPitch: pitch } = customPrefs;
-    const cacheKey = `${speed}:${pitch}:${happy}:${source}`;
+    // Profile-specific settings allow isolated vocabulary to sound less clipped
+    // without changing the sentence-reading path.
+    const baseSpeed = Number(customPrefs.zenSpeed) || 1;
+    const speed = Math.max(0.65, Math.min(1.25, baseSpeed * (profile.speedMultiplier || 1)));
+    const pitch = Number(customPrefs.zenPitch) || 0;
+    const baseHappy = Number(customPrefs.zenHappy) || 0;
+    const happy = profile.happyOverride ?? baseHappy;
+    const neutral = profile.neutralOverride ?? (100 - happy);
+    const cacheKey = `${speed}:${pitch}:${happy}:${neutral}:${source}`;
     const engine = zenInstance;
     try {
       if (!zenWavCache.has(cacheKey)) {
         const task = synthesisQueue.then(async () => {
           if (request !== audioRequest || engine !== zenInstance) return;
-          const result = await engine.speak(source, { emotion: { happy, neutral: 100 - happy }, speed, pitch });
+          const result = await engine.speak(source, { emotion: { happy, neutral }, speed, pitch });
           if (request !== audioRequest || engine !== zenInstance || zenWavCache.has(cacheKey)) return;
           if (!result?.wav) throw new Error('ZEN-TTS không trả về dữ liệu âm thanh.');
           if (zenWavCache.size >= 60) {
@@ -291,7 +298,22 @@ export function createPronunciation({ state, $, showToast, events, kanaMap, fetc
 
   function speakWord(word) {
     if (!word) return false;
-    return speakText(word.kana || word.kanji);
+
+    // Read the supplied kana as the authoritative pronunciation.
+    // A Japanese sentence-final pause gives the TTS model a natural word boundary;
+    // the visible vocabulary and its stored reading are never modified.
+    const reading = String(word.kana || word.kanji || '').trim();
+    if (!reading) return false;
+
+    const speechText = /[。！？!?]$/.test(reading) ? reading : `${reading}。`;
+
+    // Isolated-word profile: slightly slower and neutral. Sentence TTS settings
+    // remain untouched because speakText() receives this profile only here.
+    return speakText(speechText, state.prefs, {
+      speedMultiplier: 0.92,
+      happyOverride: 10,
+      neutralOverride: 90
+    });
   }
 
   // A single Kana is sent as exactly one character. No synthetic long-vowel mark or punctuation.
