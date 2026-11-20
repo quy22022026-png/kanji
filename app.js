@@ -1,3 +1,6 @@
+import { createPronunciation } from './pronunciation.js';
+import { createMeaning } from './meaning.js';
+
 (() => {
       'use strict';
 
@@ -6,7 +9,7 @@
       // =======================================================================
       // 1. CẤU HÌNH CƠ BẢN (Dán link Google Sheet cố định tại đây để mọi thiết bị tự tải)
       // =======================================================================
-      const DEFAULT_SHEET_URL = ''; // VD: 'https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit'
+      const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1LI3SUVri2-uYGjB-R3jPdDeotY72_VSNIuKipnPXf10/edit?usp=drivesdk';
       const LEVELS = ['N5', 'N4', 'N3', 'N2', 'N1'];
       const SRS_INTERVALS_DAYS = [1, 3, 7, 14, 30];
       const DAY_MS = 24 * 60 * 60 * 1000;
@@ -453,41 +456,6 @@
         });
       });
 
-      // =======================================================================
-      // 7. ZEN-TTS MARINE v1.3.0 MODULE ENGINE
-      // =======================================================================
-      const ZEN_REMOTE_FILES = {
-        marineZtm: 'https://tts-models.zenryoku.work/v1.3.0/marine.ztm',
-        g2pBin: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models/g2p/g2p.bin',
-        g2pJson: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models/g2p/g2p.json',
-        cpuWasm: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/cpu/tts-cpu.wasm'
-      };
-
-      let zenInstance = null;
-      let zenLoadPromise = null;
-      let audioRequest = 0;
-      let synthesisQueue = Promise.resolve();
-      let currentAudioEl = null;
-      const zenWavCache = new Map();
-
-      function updateZenStatusUI(ready, label) {
-        const badge = $('badgeZenTts');
-        const dot = $('zenStatusDot');
-        const modalText = $('zenModalStatusText');
-        if (badge) {
-          badge.textContent = label;
-          badge.className = ready
-            ? 'text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-matcha-50 text-matcha-600 shrink-0'
-            : 'text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-[#F6EFE8] text-[#786D69] shrink-0';
-        }
-        if (dot) {
-          dot.className = ready
-            ? 'absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-matcha-500'
-            : 'absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#D1C7BF]';
-        }
-        if (modalText) modalText.textContent = label;
-      }
-
       async function fetchWithTimeout(url, options = {}, timeout = 45000) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
@@ -500,246 +468,20 @@
         } catch (err) {
           if (err.name === 'AbortError') throw new Error('Quá thời gian kết nối. Hãy kiểm tra mạng.');
           throw err;
-        } finally { clearTimeout(timer); }
-      }
-
-      async function openZenCache() {
-        try { return window.caches ? await caches.open(ZEN_CACHE_NAME) : null; }
-        catch { return null; }
-      }
-
-      function clearWavCache() {
-        for (const url of zenWavCache.values()) URL.revokeObjectURL(url);
-        zenWavCache.clear();
-      }
-
-      function stopAudio() {
-        audioRequest++;
-        if (currentAudioEl) {
-          currentAudioEl.pause();
-          currentAudioEl.removeAttribute('src');
-          currentAudioEl.load();
-          currentAudioEl = null;
-        }
-        if ('speechSynthesis' in window) {
-          try { window.speechSynthesis.cancel(); } catch {}
+        } finally {
+          clearTimeout(timer);
         }
       }
 
-      async function createZenEngine(options, responses) {
-        const assets = await Promise.all([...responses].map(async ([url, response]) => ({
-          url, body: await response.clone().arrayBuffer(), headers: [...response.headers]
-        })));
-        const worker = new Worker(new URL('./zen-worker.js', document.baseURI), { type: 'module' });
-        const pending = new Map();
-        let sequence = 0;
-        let terminated = false;
-
-        const destroy = (message = 'Phiên giọng đọc đã kết thúc. Hãy nạp lại Marine.') => {
-          if (terminated) return;
-          terminated = true;
-          worker.terminate();
-          for (const req of pending.values()) {
-            clearTimeout(req.timer);
-            req.reject(new Error(message));
-          }
-          pending.clear();
-        };
-
-        worker.onmessage = ({ data }) => {
-          const req = pending.get(data.id);
-          if (!req) return;
-          pending.delete(data.id);
-          clearTimeout(req.timer);
-          if (data.error) req.reject(new Error(data.error));
-          else req.resolve(data.result);
-        };
-        worker.onerror = (event) => {
-          event.preventDefault();
-          destroy('Cần đặt cùng zen-worker.js & vendor/zen-tts/ trên HTTP(S) để chạy Marine.');
-        };
-
-        const ask = (type, data, transfer = []) => new Promise((resolve, reject) => {
-          if (terminated) return reject(new Error('Giọng đọc đã dừng. Hãy nạp lại Marine.'));
-          const id = ++sequence;
-          const timer = setTimeout(() => destroy('Giọng đọc quá thời gian xử lý.'), 120000);
-          pending.set(id, { resolve, reject, timer });
-          try { worker.postMessage({ id, type, ...data }, transfer); }
-          catch (err) { clearTimeout(timer); pending.delete(id); reject(err); }
-        });
-
-        try {
-          const result = await ask('load', { options, assets }, assets.map(a => a.body));
-          return {
-            backend: result.backend,
-            destroy,
-            isAlive: () => !terminated,
-            speak: (text, speechOptions) => ask('speak', { text, options: speechOptions })
-          };
-        } catch (err) { destroy(); throw err; }
-      }
-
-      async function initZenTtsFromCacheOrNetwork(autoDownload = false, localResponses = null) {
-        if (location.protocol === 'file:') {
-          if (autoDownload || localResponses) showToast('Hãy mở qua GitHub Pages (HTTPS) hoặc http://localhost để nạp Marine.', 'error');
-          return null;
-        }
-        if (zenLoadPromise) return zenLoadPromise;
-        if (zenInstance && !zenInstance.isAlive()) {
-          zenInstance = null;
-          clearWavCache();
-          updateZenStatusUI(false, 'Cần nạp lại Marine');
-        }
-        if (zenInstance && !localResponses) return zenInstance;
-
-        zenLoadPromise = (async () => {
-          const detail = $('zenDownloadDetail');
-          const buttons = [$('btnDownloadZenMarine'), $('btnModalDownloadZen')];
-          try {
-            const cache = await openZenCache();
-            const urls = ['marineZtm', 'g2pBin', 'g2pJson', 'cpuWasm'].map(k => ZEN_REMOTE_FILES[k]);
-            const responses = new Map(localResponses || []);
-            if (!localResponses) {
-              for (const url of urls) {
-                const saved = cache && await cache.match(url);
-                if (saved) responses.set(url, saved);
-              }
-              if (!autoDownload && responses.size !== urls.length) {
-                updateZenStatusUI(false, 'Chưa nạp');
-                return null;
-              }
-            }
-
-            buttons.forEach(b => { if (b) b.disabled = true; });
-            updateZenStatusUI(false, 'Đang nạp Marine...');
-            if (detail) detail.textContent = 'Đang tải giọng Marine, G2P và WASM. Lần đầu có thể mất 1–2 phút...';
-
-            await Promise.all(urls.map(async url => {
-              if (responses.has(url)) return;
-              const resp = await fetchWithTimeout(url, {}, 120000);
-              if (!resp.ok) throw new Error(`Không tải được ${url.split('/').pop()} (HTTP ${resp.status}).`);
-              responses.set(url, new Response(await resp.arrayBuffer(), { headers: resp.headers }));
-            }));
-
-            const options = {
-              modelsUrl: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models',
-              cpuWasmUrl: ZEN_REMOTE_FILES.cpuWasm,
-              model: ZEN_REMOTE_FILES.marineZtm
-            };
-            const newInstance = await createZenEngine(options, responses);
-            stopAudio();
-            if (zenInstance) zenInstance.destroy();
-            zenInstance = newInstance;
-            clearWavCache();
-
-            let persisted = !!cache;
-            if (cache) {
-              try { for (const [url, resp] of responses) await cache.put(url, resp.clone()); }
-              catch { persisted = false; }
-            }
-            const backend = zenInstance.backend.toUpperCase();
-            updateZenStatusUI(true, `Sẵn sàng (${backend})`);
-            if (detail) {
-              detail.textContent = persisted
-                ? `✅ Đã nạp Marine v1.3.0 (${backend}) và lưu Cache trình duyệt.`
-                : `✅ Marine sẵn sàng (${backend}).`;
-            }
-            events.emit('tts:ready', { backend });
-            if (autoDownload || localResponses) showToast('Đã kích hoạt ZEN-TTS Marine!', 'success');
-            return zenInstance;
-          } catch (err) {
-            updateZenStatusUI(!!zenInstance, zenInstance ? 'Đang dùng bản trước' : 'Chưa nạp');
-            if (detail) detail.textContent = `Không nạp được Marine: ${err.message}`;
-            if (autoDownload || localResponses) showToast('Lỗi nạp Marine: ' + err.message, 'error');
-            return null;
-          } finally {
-            buttons.forEach(b => { if (b) b.disabled = false; });
-          }
-        })();
-
-        try { return await zenLoadPromise; }
-        finally { zenLoadPromise = null; }
-      }
-
-      async function initZenTtsFromLocalFiles(fileList) {
-        const files = Array.from(fileList || []);
-        const responses = new Map();
-        const required = { marineZtm: 'marine.ztm', g2pBin: 'g2p.bin', g2pJson: 'g2p.json', cpuWasm: 'tts-cpu.wasm' };
-        for (const [key, name] of Object.entries(required)) {
-          const found = files.find(f => f.name === name);
-          if (!found) { showToast('Thư mục thiếu tệp bắt buộc: ' + name, 'error'); return; }
-          responses.set(ZEN_REMOTE_FILES[key], new Response(found));
-        }
-        return initZenTtsFromCacheOrNetwork(false, responses);
-      }
-
-      function speakFallbackWebSpeech(text, speed = 1.0) {
-        if (!('speechSynthesis' in window)) return false;
-        try {
-          window.speechSynthesis.cancel();
-          const u = new SpeechSynthesisUtterance(text);
-          u.lang = 'ja-JP';
-          u.rate = Math.max(0.6, Math.min(1.4, speed));
-          const voices = window.speechSynthesis.getVoices();
-          const jp = voices.find(v => v.lang === 'ja-JP') || voices.find(v => v.lang.startsWith('ja'));
-          if (jp) u.voice = jp;
-          window.speechSynthesis.speak(u);
-          return true;
-        } catch { return false; }
-      }
-
-      async function speakJapaneseText(text, customPrefs = state.prefs) {
-        if (!text) return;
-        stopAudio();
-        const request = audioRequest;
-
-        if (!zenInstance) {
-          if (customPrefs.fallbackWebSpeech && speakFallbackWebSpeech(text, customPrefs.zenSpeed)) return;
-          showToast(zenLoadPromise ? 'Đang nạp ZEN-TTS Marine...' : 'Hãy nạp ZEN-TTS Marine trong mục 🎧 hoặc 📦 Mô-đun để nghe.');
-          return;
-        }
-
-        const { zenHappy: happy, zenSpeed: speed, zenPitch: pitch } = customPrefs;
-        const cacheKey = `${speed}:${pitch}:${happy}:${text}`;
-        const engine = zenInstance;
-        try {
-          if (!zenWavCache.has(cacheKey)) {
-            const task = synthesisQueue.then(async () => {
-              if (request !== audioRequest || engine !== zenInstance) return;
-              const result = await engine.speak(text, { emotion: { happy, neutral: 100 - happy }, speed, pitch });
-              if (engine !== zenInstance || zenWavCache.has(cacheKey)) return;
-              if (zenWavCache.size >= 60) {
-                const oldest = zenWavCache.keys().next().value;
-                URL.revokeObjectURL(zenWavCache.get(oldest));
-                zenWavCache.delete(oldest);
-              }
-              zenWavCache.set(cacheKey, URL.createObjectURL(result.wav));
-            });
-            synthesisQueue = task.catch(() => {});
-            await task;
-          }
-          if (request !== audioRequest || !zenWavCache.has(cacheKey)) return;
-          const audio = new Audio(zenWavCache.get(cacheKey));
-          currentAudioEl = audio;
-          await audio.play();
-        } catch (err) {
-          if (request === audioRequest) showToast('Lỗi âm thanh ZEN-TTS: ' + err.message, 'error');
-        }
-      }
-
-      function speakWord(word) {
-        if (!word) return;
-        speakJapaneseText(word.kana || word.kanji);
-      }
-
-      function speakKanaItem(hira) {
-        const info = KANA_PHONETIC_MAP.get(hira);
-        const mode = state.prefs.kanaReadMode || 'CLEAR_MORA';
-        const text = info
-          ? (mode === 'WITH_WORD' ? `${info.clearMora}。${info.sampleJa}。` : `${info.clearMora}。`)
-          : `${hira}ー。`;
-        speakJapaneseText(text);
-      }
+      const pronunciation = createPronunciation({
+        state, $, showToast, events, kanaMap: KANA_PHONETIC_MAP, fetchWithTimeout
+      });
+      const speakJapaneseText = (...args) => pronunciation.speakText(...args);
+      const speakWord = (...args) => pronunciation.speakWord(...args);
+      const speakKanaItem = (...args) => pronunciation.speakKana(...args);
+      const stopAudio = (...args) => pronunciation.stop();
+      const initZenTtsFromCacheOrNetwork = (...args) => pronunciation.initMarine(...args);
+      const initZenTtsFromLocalFiles = (...args) => pronunciation.initFromLocalFiles(...args);
 
       // =======================================================================
       // 8. GOOGLE SHEETS AUTO-SYNC & CSV PARSER
@@ -782,25 +524,60 @@
         return rows;
       }
 
+      function normalizeSheetHeader(value) {
+        return String(value || '')
+          .replace(/^\uFEFF/, '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[()_\-./]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+
       function mapSheetRowsToWords(rows, fallbackLevel = 'N5') {
-        if (!rows || rows.length < 2) return [];
-        const headers = rows[0].map(h => h.toLowerCase().normalize('NFC').trim());
-        const findCol = (patterns) => headers.findIndex(h => patterns.some(p => h === p || h.includes(p)));
-        const idx = {
-          id: findCol(['id']),
-          level: findCol(['level', 'cấp độ']),
-          kanji: findCol(['kanji', 'chữ hán']),
-          kana: findCol(['kana', 'hiragana', 'reading']),
-          furigana: findCol(['furigana']),
-          romaji: findCol(['romaji']),
-          hanViet: findCol(['hán-việt', 'hán việt', 'hanviet', 'han_viet']),
-          meaning: findCol(['nghĩa tiếng việt', 'nghĩa', 'meaning']),
-          pos: findCol(['loại từ', 'từ loại', 'pos']),
-          topic: findCol(['chủ đề', 'topic']),
-          exJa: findCol(['ví dụ (jp)', 'ví dụ jp', 'example']),
-          exRomaji: findCol(['ví dụ (romaji)', 'ví dụ romaji']),
-          exVi: findCol(['dịch ví dụ', 'ví dụ vi'])
+        if (!rows || !rows.length) return [];
+
+        const expected = ['id', 'level', 'kanji', 'kana', 'furigana', 'romaji',
+          'hanViet', 'meaning', 'pos', 'topic', 'exJa', 'exRomaji', 'exVi'];
+        const firstCell = String(rows[0]?.[0] || '').trim();
+        const hasHeader = !/^N[1-5]_\d+/i.test(firstCell);
+        if (!hasHeader) {
+          rows = [expected, ...rows];
+        } else if (rows.length < 2) {
+          return [];
+        }
+
+        const headers = rows[0].map(normalizeSheetHeader);
+        const aliases = {
+          id: ['id', 'ma tu', 'ma tu vung', 'word id'],
+          level: ['level', 'cap do', 'jlpt', 'trinh do'],
+          kanji: ['kanji', 'chu han', 'tu tieng nhat'],
+          kana: ['kana', 'hiragana', 'reading', 'cach doc', 'phien am'],
+          furigana: ['furigana', 'furigana reading'],
+          romaji: ['romaji', 'roma ji'],
+          hanViet: ['han viet', 'hanviet'],
+          meaning: ['nghia tieng viet', 'nghia', 'meaning', 'tieng viet'],
+          pos: ['loai tu', 'tu loai', 'pos', 'word type'],
+          topic: ['chu de', 'topic', 'nhom chu de'],
+          exJa: ['vi du jp', 'vi du tieng nhat', 'example jp', 'example japanese'],
+          exRomaji: ['vi du romaji', 'example romaji'],
+          exVi: ['dich vi du', 'vi du vi', 'example vi', 'example vietnamese']
         };
+        const findCol = (names) => headers.findIndex(h =>
+          names.some(name => h === name || h.includes(name))
+        );
+        const idx = Object.fromEntries(
+          Object.entries(aliases).map(([key, names]) => [key, findCol(names)])
+        );
+
+        // Fallback to the documented 13-column order when the sheet has headers
+        // but uses custom labels: ID, Level, Kanji, Hiragana, Furigana,
+        // Romaji, Hán Việt, Nghĩa, Loại từ, Chủ đề, Ví dụ JP, Ví dụ Romaji, Dịch ví dụ.
+        const knownHeaderCount = Object.values(idx).filter(i => i >= 0).length;
+        if (knownHeaderCount < 5 && rows[0].length >= 13) {
+          expected.forEach((key, i) => { if (idx[key] < 0) idx[key] = i; });
+        }
 
         const words = [];
         const seenIds = new Set();
@@ -817,12 +594,14 @@
           const rawLevel = (get(idx.level) || fallbackLevel).toUpperCase();
           const level = LEVELS.includes(rawLevel) ? rawLevel : fallbackLevel;
           const baseId = get(idx.id) || `${level}_${r}_${displayWord}`;
-          const id = seenIds.has(baseId) ? `${baseId}__${r}` : baseId;
-          seenIds.add(id);
+          if (seenIds.has(baseId)) {
+            throw new Error(`ID từ vựng bị trùng trong Sheet ${fallbackLevel}: ${baseId}`);
+          }
+          seenIds.add(baseId);
           const exJa = get(idx.exJa);
 
           words.push({
-            id, level, kanji,
+            id: baseId, level, kanji,
             kana: kana || displayWord,
             furigana,
             romaji: get(idx.romaji),
@@ -836,15 +615,67 @@
         return words;
       }
 
+      async function fetchGoogleSheetCsv(sheetId, sheetName) {
+        const encodedName = encodeURIComponent(sheetName);
+        const urls = [
+          `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedName}`,
+          `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&sheet=${encodedName}`
+        ];
+        const errors = [];
+
+        for (const url of urls) {
+          try {
+            const resp = await fetchWithTimeout(url, {
+              method: 'GET',
+              mode: 'cors',
+              credentials: 'omit',
+              cache: 'no-store',
+              headers: { 'Accept': 'text/csv,text/plain,*/*' }
+            }, 25000);
+            if (!resp.ok) {
+              errors.push(`HTTP ${resp.status}`);
+              continue;
+            }
+            const body = (await resp.text()).replace(/^\uFEFF/, '').trim();
+            if (!body) {
+              errors.push('Google trả về dữ liệu rỗng');
+              continue;
+            }
+            if (/^\s*<!doctype html|^\s*<html|accounts\.google\.com|request access|you need access/i.test(body)) {
+              errors.push('Sheet chưa được chia sẻ công khai hoặc Google yêu cầu đăng nhập');
+              continue;
+            }
+            if (/^google\.visualization\.Query\.setResponse/i.test(body)) {
+              errors.push('Google trả về định dạng GViz không phải CSV');
+              continue;
+            }
+            return body;
+          } catch (err) {
+            errors.push(err && err.message ? err.message : String(err));
+          }
+        }
+
+        throw new Error(
+          `Không tải được Sheet "${sheetName}". ` +
+          `Kiểm tra tên tab có đúng "${sheetName}" và quyền chia sẻ là "Bất kỳ ai có đường liên kết – Người xem". ` +
+          `Chi tiết: ${errors.join(' | ')}`
+        );
+      }
+
       async function syncFromGoogleSheets({ silent = false } = {}) {
         const rawUrl = $('sheetUrlInput').value.trim() || safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL);
         const sheetId = extractGoogleSheetId(rawUrl);
         if (!sheetId) {
-          if (!silent) showToast('Hãy dán đúng link Google Sheets (chứa /spreadsheets/d/...)', 'error');
+          if (!silent) showToast('Link Google Sheets không hợp lệ. Hãy dán link có dạng docs.google.com/spreadsheets/d/...', 'error');
           return false;
         }
+
         const selectedLevels = Array.from(document.querySelectorAll('.sheet-lvl:checked')).map(el => el.value);
         const levelsToFetch = selectedLevels.length ? selectedLevels : (state.prefs.sheetLevels || ['N5', 'N4', 'N3']);
+        if (!levelsToFetch.length) {
+          if (!silent) showToast('Hãy chọn ít nhất một cấp độ N5–N1 để đồng bộ.', 'error');
+          return false;
+        }
 
         safeSetLS(STORAGE_SHEET_KEY, rawUrl);
         state.prefs.sheetLevels = levelsToFetch;
@@ -852,33 +683,47 @@
 
         const btn = $('btnSyncGoogleSheet');
         if (!silent) btn.disabled = true;
-        $('badgeSheetStatus').textContent = silent ? 'Đang kiểm tra nền...' : 'Đang tải...';
+        $('badgeSheetStatus').textContent = silent ? 'Đang kiểm tra nền...' : 'Đang tải dữ liệu...';
 
         try {
           const allWords = [];
           const loadedSheets = [];
           const seenIds = new Set();
+
           for (const sheetName of levelsToFetch) {
-            const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
-            const resp = await fetchWithTimeout(csvUrl, {}, 25000);
-            if (!resp.ok) throw new Error(`Không tải được Sheet ${sheetName} (HTTP ${resp.status}).`);
-            const csvText = await resp.text();
-            if (csvText.trim().startsWith('<!DOCTYPE') || /<html[\\s>]/i.test(csvText)) {
-              throw new Error('Không đọc được Google Sheets. Kiểm tra quyền chia sẻ "Bất kỳ ai có liên kết đều xem được" và tên Sheet.');
-            }
+            const csvText = await fetchGoogleSheetCsv(sheetId, sheetName);
             const rows = parseCSV(csvText);
-            if (rows.length < 2) throw new Error(`Sheet ${sheetName} không có dữ liệu từ vựng hoặc sai cấu trúc.`);
-            const parsed = mapSheetRowsToWords(rows, sheetName);
-            if (!parsed.length) throw new Error(`Không tìm thấy từ hợp lệ trong Sheet ${sheetName}.`);
-            for (const word of parsed) {
-              if (seenIds.has(word.id)) throw new Error(`ID từ vựng bị trùng giữa các Sheet: ${word.id}`);
-              seenIds.add(word.id);
+            if (rows.length < 2) {
+              throw new Error(`Sheet "${sheetName}" chỉ có tiêu đề hoặc không có dữ liệu.`);
             }
-            allWords.push(...parsed);
-            loadedSheets.push(`${sheetName}(${parsed.length})`);
+
+            const parsed = mapSheetRowsToWords(rows, sheetName);
+            if (!parsed.length) {
+              const headerPreview = (rows[0] || []).slice(0, 13).join(' | ');
+              throw new Error(
+                `Không tìm thấy từ hợp lệ trong Sheet "${sheetName}". ` +
+                `Cần có ít nhất cột Kanji/Kana và Nghĩa. Tiêu đề đọc được: ${headerPreview}`
+              );
+            }
+
+            // If the sheet has a Level column, retain only rows belonging to its selected tab.
+            const levelWords = parsed.filter(word => word.level === sheetName);
+            if (levelWords.length) {
+              for (const word of levelWords) {
+                if (seenIds.has(word.id)) throw new Error(`ID từ vựng bị trùng giữa các Sheet: ${word.id}`);
+                seenIds.add(word.id);
+                allWords.push(word);
+              }
+              loadedSheets.push(`${sheetName}(${levelWords.length})`);
+            } else {
+              throw new Error(
+                `Sheet "${sheetName}" có dữ liệu nhưng không có bản ghi mang cấp độ ${sheetName}. ` +
+                `Hãy kiểm tra cột Level/Cấp độ và tên tab.`
+              );
+            }
           }
 
-          if (!allWords.length) throw new Error('Không đọc được dòng từ vựng nào. Kiểm tra lại tên Sheet và dữ liệu.');
+          if (!allWords.length) throw new Error('Không tìm thấy từ vựng hợp lệ trong các Sheet đã chọn.');
 
           const prevCount = state.words.length;
           const prevFingerprint = `${state.words.length}:${state.words[0]?.id}:${state.words[state.words.length - 1]?.id}`;
@@ -889,15 +734,16 @@
             words: allWords
           }, true, silent);
 
-          $('badgeSheetStatus').textContent = `Tự đồng bộ (${allWords.length} từ)`;
-          if (!silent) showToast(`Đã đồng bộ ${allWords.length} từ từ Google Sheets!`, 'success');
+          $('badgeSheetStatus').textContent = `Đã đồng bộ ${allWords.length} từ`;
+          if (!silent) showToast(`Đã đồng bộ ${allWords.length} từ từ Google Sheets (${loadedSheets.join(', ')}).`, 'success');
           else if (prevFingerprint !== nextFingerprint || prevCount === SAMPLE_DATASET.words.length) {
-            showToast(`🔄 Đã tự cập nhật ${allWords.length} từ từ Google Sheets!`, 'success');
+            showToast(`Đã tự cập nhật ${allWords.length} từ từ Google Sheets.`, 'success');
           }
           return true;
         } catch (err) {
-          $('badgeSheetStatus').textContent = silent ? 'Dùng bản đã lưu' : 'Lỗi đồng bộ';
-          if (!silent) showToast(err.message, 'error');
+          $('badgeSheetStatus').textContent = silent ? 'Không đồng bộ được – giữ dữ liệu đã lưu' : 'Lỗi đồng bộ';
+          console.error('[Kawaii JLPT] Google Sheets sync failed:', err);
+          if (!silent) showToast(err.message || 'Đồng bộ thất bại. Hãy kiểm tra link, quyền chia sẻ và tên các tab.', 'error');
           return false;
         } finally {
           if (!silent) btn.disabled = false;
@@ -907,72 +753,11 @@
       // =======================================================================
       // 9. FURIGANA RUBY & TAP-TO-TRANSLATE ENGINE
       // =======================================================================
-      function buildDictionaryIndex() {
-        const idx = new Map();
-        Object.entries(BUILTIN_MINI_DICT).forEach(([k, v]) => idx.set(k, { text: k, ...v }));
-        state.words.forEach(w => {
-          const entry = {
-            text: w.kanji || w.kana,
-            reading: w.kana,
-            hanViet: w.hanViet || '',
-            meaning: w.meaning,
-            level: w.level,
-            note: [w.pos, w.topic].filter(Boolean).join(' · ')
-          };
-          if (w.kanji) idx.set(w.kanji, entry);
-          if (w.kana && !idx.has(w.kana)) idx.set(w.kana, entry);
-
-          if (w.furigana && w.furigana.includes('[')) {
-            const parts = [...w.furigana.matchAll(/(\p{Script=Han}+)\[([^\]]+)\]/gu)];
-            const hvParts = w.hanViet ? w.hanViet.split(/\s+/) : [];
-            parts.forEach((m, i) => {
-              const kChar = m[1], kRead = m[2];
-              if (kChar.length === 1 && !idx.has(kChar)) {
-                idx.set(kChar, {
-                  text: kChar, reading: kRead,
-                  hanViet: hvParts[i] || w.hanViet || '',
-                  meaning: `Trong từ "${w.kanji}" (${w.meaning})`,
-                  level: w.level,
-                  note: `Cách đọc trong ${w.kanji}: ${kRead}`
-                });
-              }
-            });
-          }
-        });
-        state.dictIndex = idx;
-      }
-
-      function lookupToken(token, parentWord = null) {
-        if (state.dictIndex.has(token)) return state.dictIndex.get(token);
-        if (parentWord && (parentWord.kanji || '').includes(token)) {
-          return {
-            text: token, reading: parentWord.kana, hanViet: parentWord.hanViet || '',
-            meaning: parentWord.meaning, level: parentWord.level,
-            note: `Thuộc từ: ${parentWord.kanji} (${parentWord.kana})`
-          };
-        }
-        return { text: token, reading: token, hanViet: '', meaning: 'Chưa có trong từ điển hiện tại', note: 'Ấn nút 🔊 để nghe cách phát âm' };
-      }
-
-      function showTranslateSheet(token, parentWord = null) {
-        const info = lookupToken(token, parentWord);
-        $('trCharBox').textContent = info.text;
-        $('trReading').textContent = info.reading || '';
-        $('trHanViet').textContent = info.hanViet || '';
-        $('trHanViet').classList.toggle('hidden', !info.hanViet);
-        $('trLevel').textContent = info.level || '';
-        $('trLevel').classList.toggle('hidden', !info.level);
-        $('trMeaning').textContent = info.meaning;
-        $('trNote').textContent = info.note || '';
-        state.activePopupSpeakText = info.reading || info.text;
-        $('translateSheet').classList.remove('hidden');
-        speakJapaneseText(state.activePopupSpeakText);
-      }
-
-      function hideTranslateSheet() {
-        $('translateSheet').classList.add('hidden');
-        document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
-      }
+      const meaning = createMeaning({ state, $, document, builtinDictionary: BUILTIN_MINI_DICT });
+      const buildDictionaryIndex = (...args) => meaning.buildIndex(...args);
+      const lookupToken = (...args) => meaning.lookup(...args);
+      const showTranslateSheet = (...args) => meaning.showPopup(...args);
+      const hideTranslateSheet = (...args) => meaning.hidePopup(...args);
 
       function renderCardWordWithRuby(containerEl, word) {
         containerEl.innerHTML = '';
@@ -1700,7 +1485,7 @@
         renderAll,
         showToast,
         srs: { getWordStat, getWordSrsInfo, rateWordSrs, isWordDue, isWordNew, isWordLearned },
-        tts: { speak: speakJapaneseText, speakWord, speakKana: speakKanaItem, stop: stopAudio, initMarine: initZenTtsFromCacheOrNetwork },
+        tts: { speak: speakJapaneseText, speakWord, speakKana: speakKanaItem, stop: stopAudio, initMarine: initZenTtsFromCacheOrNetwork, getStatus: pronunciation.getStatus },
         dict: { lookup: lookupToken, tokenize: tokenizeJapaneseSentence, showPopup: showTranslateSheet, hidePopup: hideTranslateSheet }
       };
 
@@ -2175,6 +1960,6 @@
         initZenTtsFromCacheOrNetwork(false);
       }
 
-      window.addEventListener('pagehide', () => { stopAudio(); clearWavCache(); });
+      window.addEventListener('pagehide', () => { pronunciation.destroy(); });
       bootstrap();
     })();
