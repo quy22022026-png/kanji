@@ -37,7 +37,11 @@
         throw new Error('Phiên học không còn hoạt động.');
       }
       // SRS là nguồn tính lịch ôn duy nhất.
-      const stat = srs.rateWord(wordId, rating);
+      const early = before.earlyWordIds?.includes(wordId);
+      const alreadyRated = before.firstAttemptWordIds?.includes(wordId);
+      const stat = ((early && rating === 'good') || alreadyRated)
+        ? srs.getWordStat(wordId)
+        : srs.rateWord(wordId, rating);
       try {
         const snapshot = session.record(wordId, rating);
         return {
