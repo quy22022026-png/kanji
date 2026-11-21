@@ -1035,7 +1035,7 @@
         const now = Date.now();
         const pool = getBasePool();
 
-        // SMART là phiên học chính: 10 từ, trộn từ mới và từ đến hạn.
+        // SMART là phiên học chính: số từ theo tùy chọn người học, trộn từ mới và từ đến hạn.
         // Phiên đang học được khôi phục, không tự tạo phiên mới khi tải lại trang.
         if (state.prefs.fcFilter === 'SMART' && window.KawaiiFlashcards) {
           const savedSession = studySession.getSnapshot();
@@ -1046,7 +1046,7 @@
           } else {
             const dueList = pool.filter(w => isWordDue(w.id, now));
             const newList = pool.filter(w => isWordNew(w.id));
-            state.fcDeck = flashcards.start(shuffle ? shuffled([...dueList, ...newList]) : [...dueList, ...newList], { limit: 10 });
+            state.fcDeck = flashcards.start(shuffle ? shuffled([...dueList, ...newList]) : [...dueList, ...newList], { limit: getSessionWordLimit(pool.length) });
           }
           state.fcIndex = 0;
           state.fcFlipped = false;
@@ -1290,6 +1290,12 @@
         renderFlashcard();
       }
 
+      function getSessionWordLimit(availableCount) {
+        const selected = Number(state.prefs.sessionSize);
+        if (!Number.isFinite(selected) || selected <= 0) return Math.max(1, availableCount);
+        return Math.min(Math.floor(selected), Math.max(1, availableCount));
+      }
+
       function startNewStudySession() {
         if (!studySession || !flashcards) {
           rebuildFlashcardDeck();
@@ -1303,7 +1309,7 @@
         const pool = getBasePool();
         const dueList = pool.filter(w => isWordDue(w.id, now));
         const newList = pool.filter(w => isWordNew(w.id));
-        state.fcDeck = flashcards.start([...dueList, ...newList], { limit: 10 });
+        state.fcDeck = flashcards.start([...dueList, ...newList], { limit: getSessionWordLimit(pool.length) });
         state.fcIndex = 0;
         state.fcFlipped = false;
         const snapshot = studySession.getSnapshot();
@@ -1957,7 +1963,7 @@
         });
 
         return Object.freeze({
-          version: '3.7.1-core',
+          version: '3.7.2-core',
           State,
           Events: events,
           Modules,
@@ -1975,7 +1981,7 @@
       })();
 
       window.KawaiiApp = {
-        version: '3.7.1',
+        version: '3.7.2',
         Core,
         studySession,
         flashcards,
@@ -2318,12 +2324,24 @@
       $('btnStartNextSession').onclick = startNewStudySession;
       $('btnStartQuizAfterSession').onclick = () => startQuiz(10);
       $('btnViewAllCards').onclick = () => { state.prefs.fcFilter = 'ALL'; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
-      $('sessionSizeSelect').value = '10';
-      $('sessionSizeSelect').disabled = true;
-      state.prefs.sessionSize = 10;
-      $('sessionSizeSelect').onchange = () => {
-        $('sessionSizeSelect').value = '10';
-        showToast('Phiên học hiện được cố định ở 10 từ.', 'info');
+      const sessionSizeSelect = $('sessionSizeSelect');
+      const allowedSessionSizes = new Set(['10', '20', '30', '0']);
+      if (!allowedSessionSizes.has(String(state.prefs.sessionSize))) state.prefs.sessionSize = 10;
+      sessionSizeSelect.disabled = false;
+      sessionSizeSelect.value = String(state.prefs.sessionSize);
+      sessionSizeSelect.onchange = () => {
+        const selected = String(sessionSizeSelect.value);
+        if (!allowedSessionSizes.has(selected)) {
+          sessionSizeSelect.value = String(state.prefs.sessionSize);
+          showToast('Vui lòng chọn số từ hợp lệ.', 'warning');
+          return;
+        }
+        state.prefs.sessionSize = Number(selected);
+        savePrefs();
+        const active = studySession?.getSnapshot()?.status === 'active';
+        showToast(active
+          ? `Đã lưu ${selected === '0' ? 'không giới hạn' : selected + ' từ'} cho phiên tiếp theo. Phiên hiện tại không thay đổi.`
+          : `Đã chọn ${selected === '0' ? 'không giới hạn' : selected + ' từ'} cho phiên học.`, 'success');
       };
       document.querySelectorAll('.fc-filter-btn').forEach(btn => {
         btn.onclick = () => { state.prefs.fcFilter = btn.dataset.filter; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
@@ -2869,9 +2887,11 @@
         } catch (error) {
           console.warn('[KawaiiDatabase] Initial local data migration failed:', error);
         }
-        state.prefs.sessionSize = 10;
-        $('sessionSizeSelect').value = '10';
-        $('sessionSizeSelect').disabled = true;
+        const sessionSizeSelect = $('sessionSizeSelect');
+        if (sessionSizeSelect) {
+          sessionSizeSelect.disabled = false;
+          sessionSizeSelect.value = String(state.prefs.sessionSize || 10);
+        }
 
         const savedSheetUrl = safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL);
         if (savedSheetUrl) $('sheetUrlInput').value = savedSheetUrl;
