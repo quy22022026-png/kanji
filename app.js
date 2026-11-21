@@ -1,6 +1,3 @@
-import { createPronunciation } from './pronunciation.js';
-import { createMeaning } from './meaning.js';
-
 (() => {
       'use strict';
 
@@ -9,7 +6,7 @@ import { createMeaning } from './meaning.js';
       // =======================================================================
       // 1. CẤU HÌNH CƠ BẢN (Dán link Google Sheet cố định tại đây để mọi thiết bị tự tải)
       // =======================================================================
-      const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1LI3SUVri2-uYGjB-R3jPdDeotY72_VSNIuKipnPXf10/edit?usp=drivesdk';
+      const DEFAULT_SHEET_URL = ''; // VD: 'https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit'
       const LEVELS = ['N5', 'N4', 'N3', 'N2', 'N1'];
       const SRS_INTERVALS_DAYS = [1, 3, 7, 14, 30];
       const DAY_MS = 24 * 60 * 60 * 1000;
@@ -93,6 +90,15 @@ import { createMeaning } from './meaning.js';
           listeners.get(event).add(fn);
         },
         off(event, fn) { listeners.get(event)?.delete(fn); },
+        once(event, fn) {
+          if (typeof fn !== 'function') return;
+          const wrapped = (payload) => {
+            events.off(event, wrapped);
+            fn(payload);
+          };
+          events.on(event, wrapped);
+          return () => events.off(event, wrapped);
+        },
         emit(event, payload) {
           listeners.get(event)?.forEach(fn => {
             try { fn(payload); } catch (err) { console.error(`[Plugin Event ${event}]`, err); }
@@ -183,13 +189,7 @@ import { createMeaning } from './meaning.js';
             nextGoodDays
           };
         }
-        const remainingMs = Math.max(0, st.nextReviewAt - now);
-        const daysLeft = Math.ceil(remainingMs / DAY_MS);
-        const shortWaitLabel = remainingMs < 60 * 60 * 1000
-          ? `⏳ Ôn sau ${Math.max(1, Math.ceil(remainingMs / 60000))} phút`
-          : remainingMs < DAY_MS
-            ? `⏳ Ôn sau ${Math.ceil(remainingMs / (60 * 60 * 1000))} giờ`
-            : `⏳ Ôn sau ${daysLeft} ngày`;
+        const daysLeft = Math.max(1, Math.ceil((st.nextReviewAt - now) / DAY_MS));
         if (st.intervalDays >= 14) {
           return {
             status: 'mastered',
@@ -200,7 +200,7 @@ import { createMeaning } from './meaning.js';
         }
         return {
           status: 'scheduled',
-          label: shortWaitLabel,
+          label: `⏳ Ôn sau ${daysLeft} ngày`,
           badgeClass: 'bg-[#FEF3C7] text-[#B45309]',
           nextGoodDays
         };
@@ -221,11 +221,16 @@ import { createMeaning } from './meaning.js';
         return !st || (st.reps === 0 && st.lapses === 0);
       }
 
-      function rateWordSrs(wordId, rating) {
-        const now = Date.now();
-        const prev = getWordStat(wordId) || { reps: 0, intervalDays: 0, nextReviewAt: 0, lastReviewedAt: 0, lapses: 0 };
+      function calculateSrsNext(prevStats, rating, now = Date.now()) {
+        if (!['again', 'hard', 'good'].includes(rating)) {
+          throw new TypeError('SRS rating không hợp lệ: ' + rating);
+        }
+        const prev = prevStats || {
+          reps: 0, intervalDays: 0, nextReviewAt: 0, lastReviewedAt: 0, lapses: 0
+        };
         const next = { ...prev, lastReviewedAt: now };
 
+        // Giữ nguyên thuật toán của HTML gốc.
         if (rating === 'again') {
           next.reps = 0;
           next.intervalDays = 0;
@@ -234,16 +239,31 @@ import { createMeaning } from './meaning.js';
         } else if (rating === 'hard') {
           next.reps = Math.max(1, prev.reps);
           next.intervalDays = 1;
-          next.nextReviewAt = now + 1 * DAY_MS;
+          next.nextReviewAt = now + DAY_MS;
         } else if (rating === 'good') {
           const idx = Math.min(SRS_INTERVALS_DAYS.length - 1, prev.reps);
           next.intervalDays = SRS_INTERVALS_DAYS[idx];
           next.reps = prev.reps + 1;
           next.nextReviewAt = now + next.intervalDays * DAY_MS;
         }
+        return next;
+      }
+
+      function rateWordSrs(wordId, rating) {
+        if (!wordId) throw new TypeError('Thiếu wordId khi đánh giá SRS.');
+        const prev = getWordStat(wordId);
+        const next = calculateSrsNext(prev, rating, Date.now());
 
         state.progress.wordStats[wordId] = next;
         saveProgress();
+        events.emit('srs:rated', {
+          wordId,
+          rating,
+          previous: prev ? { ...prev } : null,
+          current: { ...next },
+          algorithmVersion: 1
+        });
+        events.emit('progress:updated', { wordId, progress: { ...next } });
         return next;
       }
 
@@ -264,63 +284,29 @@ import { createMeaning } from './meaning.js';
       }
 
       function safeGetLS(key, fallback = null) {
-        try {
-          const raw = localStorage.getItem(key);
-          return raw ? JSON.parse(raw) : fallback;
-        } catch { return fallback; }
+        return window.KawaiiDatabase
+          ? window.KawaiiDatabase.getLocalJSON(key, fallback)
+          : fallback;
       }
 
       function safeSetLS(key, value) {
-        try {
-          localStorage.setItem(key, JSON.stringify(value));
-          return true;
-        } catch { return false; }
-      }
-
-      function openIDB() {
-        return new Promise((resolve, reject) => {
-          if (!window.indexedDB) return reject(new Error('No IndexedDB'));
-          const req = indexedDB.open(IDB_NAME, 1);
-          req.onupgradeneeded = () => {
-            if (!req.result.objectStoreNames.contains(IDB_STORE)) {
-              req.result.createObjectStore(IDB_STORE);
-            }
-          };
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => reject(req.error);
-        });
+        return window.KawaiiDatabase
+          ? window.KawaiiDatabase.setLocalJSON(key, value)
+          : false;
       }
 
       async function saveDatasetToIDB(payload) {
-        const storedPayload = { ...payload, _storedAt: Date.now() };
-        let db;
-        try {
-          db = await openIDB();
-          await new Promise((resolve, reject) => {
-            const tx = db.transaction(IDB_STORE, 'readwrite');
-            tx.objectStore(IDB_STORE).put(storedPayload, 'active_dataset');
-            tx.oncomplete = resolve;
-            tx.onerror = () => reject(tx.error);
-          });
-          return true;
-        } catch {
-          return safeSetLS('jlpt_vocab_fallback_v2', storedPayload);
-        } finally { if (db) db.close(); }
+        if (!window.KawaiiDatabase) {
+          return safeSetLS('jlpt_vocab_fallback_v2', { ...payload, _storedAt: Date.now() });
+        }
+        return window.KawaiiDatabase.saveActiveDataset(payload);
       }
 
       async function loadDatasetFromIDB() {
-        let db;
         try {
-          db = await openIDB();
-          const data = await new Promise((resolve, reject) => {
-            const tx = db.transaction(IDB_STORE, 'readonly');
-            const req = tx.objectStore(IDB_STORE).get('active_dataset');
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-          });
+          const data = await window.KawaiiDatabase?.getActiveDataset();
           if (data) return data;
         } catch { /* fallback */ }
-        finally { if (db) db.close(); }
         return safeGetLS('jlpt_vocab_fallback_v2', null);
       }
 
@@ -456,6 +442,44 @@ import { createMeaning } from './meaning.js';
         });
       });
 
+      // =======================================================================
+      // 7. ZEN-TTS MARINE v1.3.0 MODULE ENGINE
+      // =======================================================================
+      const ZEN_REMOTE_FILES = {
+        marineZtm: 'https://tts-models.zenryoku.work/v1.3.0/marine.ztm',
+        g2pBin: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models/g2p/g2p.bin',
+        g2pJson: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models/g2p/g2p.json',
+        cpuWasm: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/cpu/tts-cpu.wasm'
+      };
+
+      let zenInstance = null;
+      let zenLoadPromise = null;
+      const pronunciation = window.KawaiiPronunciationModule
+        ? window.KawaiiPronunciationModule.create({
+            getEngine: () => zenInstance,
+            getPrefs: () => state.prefs,
+            onToast: (message, type) => showToast(message, type)
+          })
+        : null;
+
+      function updateZenStatusUI(ready, label) {
+        const badge = $('badgeZenTts');
+        const dot = $('zenStatusDot');
+        const modalText = $('zenModalStatusText');
+        if (badge) {
+          badge.textContent = label;
+          badge.className = ready
+            ? 'text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-matcha-50 text-matcha-600 shrink-0'
+            : 'text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-[#F6EFE8] text-[#786D69] shrink-0';
+        }
+        if (dot) {
+          dot.className = ready
+            ? 'absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-matcha-500'
+            : 'absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#D1C7BF]';
+        }
+        if (modalText) modalText.textContent = label;
+      }
+
       async function fetchWithTimeout(url, options = {}, timeout = 45000) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
@@ -468,20 +492,191 @@ import { createMeaning } from './meaning.js';
         } catch (err) {
           if (err.name === 'AbortError') throw new Error('Quá thời gian kết nối. Hãy kiểm tra mạng.');
           throw err;
-        } finally {
-          clearTimeout(timer);
-        }
+        } finally { clearTimeout(timer); }
       }
 
-      const pronunciation = createPronunciation({
-        state, $, showToast, events, kanaMap: KANA_PHONETIC_MAP, fetchWithTimeout
-      });
-      const speakJapaneseText = (...args) => pronunciation.speakText(...args);
-      const speakWord = (...args) => pronunciation.speakWord(...args);
-      const speakKanaItem = (...args) => pronunciation.speakKana(...args);
-      const stopAudio = (...args) => pronunciation.stop();
-      const initZenTtsFromCacheOrNetwork = (...args) => pronunciation.initMarine(...args);
-      const initZenTtsFromLocalFiles = (...args) => pronunciation.initFromLocalFiles(...args);
+      async function openZenCache() {
+        try { return window.caches ? await caches.open(ZEN_CACHE_NAME) : null; }
+        catch { return null; }
+      }
+
+      function clearWavCache() {
+        pronunciation?.clearCache();
+      }
+
+      function stopAudio() {
+        pronunciation?.stop();
+      }
+
+      async function createZenEngine(options, responses) {
+        const assets = await Promise.all([...responses].map(async ([url, response]) => ({
+          url, body: await response.clone().arrayBuffer(), headers: [...response.headers]
+        })));
+        const worker = new Worker(new URL('./zen-worker.js', document.baseURI), { type: 'module' });
+        const pending = new Map();
+        let sequence = 0;
+        let terminated = false;
+
+        const destroy = (message = 'Phiên giọng đọc đã kết thúc. Hãy nạp lại Marine.') => {
+          if (terminated) return;
+          terminated = true;
+          worker.terminate();
+          for (const req of pending.values()) {
+            clearTimeout(req.timer);
+            req.reject(new Error(message));
+          }
+          pending.clear();
+        };
+
+        worker.onmessage = ({ data }) => {
+          const req = pending.get(data.id);
+          if (!req) return;
+          pending.delete(data.id);
+          clearTimeout(req.timer);
+          if (data.error) req.reject(new Error(data.error));
+          else req.resolve(data.result);
+        };
+        worker.onerror = (event) => {
+          event.preventDefault();
+          destroy('Cần đặt cùng zen-worker.js & vendor/zen-tts/ trên HTTP(S) để chạy Marine.');
+        };
+
+        const ask = (type, data, transfer = []) => new Promise((resolve, reject) => {
+          if (terminated) return reject(new Error('Giọng đọc đã dừng. Hãy nạp lại Marine.'));
+          const id = ++sequence;
+          const timer = setTimeout(() => destroy('Giọng đọc quá thời gian xử lý.'), 120000);
+          pending.set(id, { resolve, reject, timer });
+          try { worker.postMessage({ id, type, ...data }, transfer); }
+          catch (err) { clearTimeout(timer); pending.delete(id); reject(err); }
+        });
+
+        try {
+          const result = await ask('load', { options, assets }, assets.map(a => a.body));
+          return {
+            backend: result.backend,
+            destroy,
+            isAlive: () => !terminated,
+            speak: (text, speechOptions) => ask('speak', { text, options: speechOptions })
+          };
+        } catch (err) { destroy(); throw err; }
+      }
+
+      async function initZenTtsFromCacheOrNetwork(autoDownload = false, localResponses = null) {
+        if (location.protocol === 'file:') {
+          if (autoDownload || localResponses) showToast('Hãy mở qua GitHub Pages (HTTPS) hoặc http://localhost để nạp Marine.', 'error');
+          return null;
+        }
+        if (zenLoadPromise) return zenLoadPromise;
+        if (zenInstance && !zenInstance.isAlive()) {
+          zenInstance = null;
+          clearWavCache();
+          updateZenStatusUI(false, 'Cần nạp lại Marine');
+        }
+        if (zenInstance && !localResponses) return zenInstance;
+
+        zenLoadPromise = (async () => {
+          const detail = $('zenDownloadDetail');
+          const buttons = [$('btnDownloadZenMarine'), $('btnModalDownloadZen')];
+          try {
+            const cache = await openZenCache();
+            const urls = ['marineZtm', 'g2pBin', 'g2pJson', 'cpuWasm'].map(k => ZEN_REMOTE_FILES[k]);
+            const responses = new Map(localResponses || []);
+            if (!localResponses) {
+              for (const url of urls) {
+                const saved = cache && await cache.match(url);
+                if (saved) responses.set(url, saved);
+              }
+              if (!autoDownload && responses.size !== urls.length) {
+                updateZenStatusUI(false, 'Chưa nạp');
+                return null;
+              }
+            }
+
+            buttons.forEach(b => { if (b) b.disabled = true; });
+            updateZenStatusUI(false, 'Đang nạp Marine...');
+            if (detail) detail.textContent = 'Đang tải giọng Marine, G2P và WASM. Lần đầu có thể mất 1–2 phút...';
+
+            await Promise.all(urls.map(async url => {
+              if (responses.has(url)) return;
+              const resp = await fetchWithTimeout(url, {}, 120000);
+              if (!resp.ok) throw new Error(`Không tải được ${url.split('/').pop()} (HTTP ${resp.status}).`);
+              responses.set(url, new Response(await resp.arrayBuffer(), { headers: resp.headers }));
+            }));
+
+            const options = {
+              modelsUrl: 'https://cdn.jsdelivr.net/gh/zenryokukikai/zen-tts@v1.3.0/models',
+              cpuWasmUrl: ZEN_REMOTE_FILES.cpuWasm,
+              model: ZEN_REMOTE_FILES.marineZtm
+            };
+            const newInstance = await createZenEngine(options, responses);
+            stopAudio();
+            if (zenInstance) zenInstance.destroy();
+            zenInstance = newInstance;
+            clearWavCache();
+
+            let persisted = !!cache;
+            if (cache) {
+              try { for (const [url, resp] of responses) await cache.put(url, resp.clone()); }
+              catch { persisted = false; }
+            }
+            const backend = zenInstance.backend.toUpperCase();
+            updateZenStatusUI(true, `Sẵn sàng (${backend})`);
+            if (detail) {
+              detail.textContent = persisted
+                ? `✅ Đã nạp Marine v1.3.0 (${backend}) và lưu Cache trình duyệt.`
+                : `✅ Marine sẵn sàng (${backend}).`;
+            }
+            events.emit('tts:ready', { backend });
+            if (autoDownload || localResponses) showToast('Đã kích hoạt ZEN-TTS Marine!', 'success');
+            return zenInstance;
+          } catch (err) {
+            updateZenStatusUI(!!zenInstance, zenInstance ? 'Đang dùng bản trước' : 'Chưa nạp');
+            if (detail) detail.textContent = `Không nạp được Marine: ${err.message}`;
+            if (autoDownload || localResponses) showToast('Lỗi nạp Marine: ' + err.message, 'error');
+            return null;
+          } finally {
+            buttons.forEach(b => { if (b) b.disabled = false; });
+          }
+        })();
+
+        try { return await zenLoadPromise; }
+        finally { zenLoadPromise = null; }
+      }
+
+      async function initZenTtsFromLocalFiles(fileList) {
+        const files = Array.from(fileList || []);
+        const responses = new Map();
+        const required = { marineZtm: 'marine.ztm', g2pBin: 'g2p.bin', g2pJson: 'g2p.json', cpuWasm: 'tts-cpu.wasm' };
+        for (const [key, name] of Object.entries(required)) {
+          const found = files.find(f => f.name === name);
+          if (!found) { showToast('Thư mục thiếu tệp bắt buộc: ' + name, 'error'); return; }
+          responses.set(ZEN_REMOTE_FILES[key], new Response(found));
+        }
+        return initZenTtsFromCacheOrNetwork(false, responses);
+      }
+
+            function speakFallbackWebSpeech(text, speed = 1.0) {
+        return pronunciation
+          ? pronunciation.speak(text, { fallbackWebSpeech: true, zenSpeed: speed })
+          : false;
+      }
+
+            function speakJapaneseText(text, customPrefs = state.prefs) {
+        if (!pronunciation) return Promise.resolve({ ok: false, reason: 'module-unavailable' });
+        return pronunciation.speak(text, customPrefs);
+      }
+
+            function speakWord(word) {
+        if (!word || !pronunciation) return;
+        return pronunciation.speakWord(word);
+      }
+
+            function speakKanaItem(hira) {
+        if (!pronunciation) return;
+        const info = KANA_PHONETIC_MAP.get(hira);
+        const mode = state.prefs.kanaReadMode === 'WITH_WORD' ? 'with-word' : 'single';
+        return pronunciation.speakKana(hira, info, mode);
+      }
 
       // =======================================================================
       // 8. GOOGLE SHEETS AUTO-SYNC & CSV PARSER
@@ -524,63 +719,27 @@ import { createMeaning } from './meaning.js';
         return rows;
       }
 
-      function normalizeSheetHeader(value) {
-        return String(value || '')
-          .replace(/^\uFEFF/, '')
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .toLowerCase()
-          .replace(/[()_\-./]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-      }
-
       function mapSheetRowsToWords(rows, fallbackLevel = 'N5') {
-        if (!rows || !rows.length) return [];
-
-        const expected = ['id', 'level', 'kanji', 'kana', 'furigana', 'romaji',
-          'hanViet', 'meaning', 'pos', 'topic', 'exJa', 'exRomaji', 'exVi'];
-        const firstCell = String(rows[0]?.[0] || '').trim();
-        const hasHeader = !/^N[1-5]_\d+/i.test(firstCell);
-        if (!hasHeader) {
-          rows = [expected, ...rows];
-        } else if (rows.length < 2) {
-          return [];
-        }
-
-        const headers = rows[0].map(normalizeSheetHeader);
-        const aliases = {
-          id: ['id', 'ma tu', 'ma tu vung', 'word id'],
-          level: ['level', 'cap do', 'jlpt', 'trinh do'],
-          kanji: ['kanji', 'chu han', 'tu tieng nhat'],
-          kana: ['kana', 'hiragana', 'reading', 'cach doc', 'phien am'],
-          furigana: ['furigana', 'furigana reading'],
-          romaji: ['romaji', 'roma ji'],
-          hanViet: ['han viet', 'hanviet'],
-          meaning: ['nghia tieng viet', 'nghia', 'meaning', 'tieng viet'],
-          pos: ['loai tu', 'tu loai', 'pos', 'word type'],
-          topic: ['chu de', 'topic', 'nhom chu de'],
-          exJa: ['vi du jp', 'vi du tieng nhat', 'example jp', 'example japanese'],
-          exRomaji: ['vi du romaji', 'example romaji'],
-          exVi: ['dich vi du', 'vi du vi', 'example vi', 'example vietnamese']
+        if (!rows || rows.length < 2) return [];
+        const headers = rows[0].map(h => h.toLowerCase().normalize('NFC').trim());
+        const findCol = (patterns) => headers.findIndex(h => patterns.some(p => h === p || h.includes(p)));
+        const idx = {
+          id: findCol(['id']),
+          level: findCol(['level', 'cấp độ']),
+          kanji: findCol(['kanji', 'chữ hán']),
+          kana: findCol(['kana', 'hiragana', 'reading']),
+          furigana: findCol(['furigana']),
+          romaji: findCol(['romaji']),
+          hanViet: findCol(['hán-việt', 'hán việt', 'hanviet', 'han_viet']),
+          meaning: findCol(['nghĩa tiếng việt', 'nghĩa', 'meaning']),
+          pos: findCol(['loại từ', 'từ loại', 'pos']),
+          topic: findCol(['chủ đề', 'topic']),
+          exJa: findCol(['ví dụ (jp)', 'ví dụ jp', 'example']),
+          exRomaji: findCol(['ví dụ (romaji)', 'ví dụ romaji']),
+          exVi: findCol(['dịch ví dụ', 'ví dụ vi'])
         };
-        const findCol = (names) => headers.findIndex(h =>
-          names.some(name => h === name || h.includes(name))
-        );
-        const idx = Object.fromEntries(
-          Object.entries(aliases).map(([key, names]) => [key, findCol(names)])
-        );
-
-        // Fallback to the documented 13-column order when the sheet has headers
-        // but uses custom labels: ID, Level, Kanji, Hiragana, Furigana,
-        // Romaji, Hán Việt, Nghĩa, Loại từ, Chủ đề, Ví dụ JP, Ví dụ Romaji, Dịch ví dụ.
-        const knownHeaderCount = Object.values(idx).filter(i => i >= 0).length;
-        if (knownHeaderCount < 5 && rows[0].length >= 13) {
-          expected.forEach((key, i) => { if (idx[key] < 0) idx[key] = i; });
-        }
 
         const words = [];
-        const seenIds = new Set();
         for (let r = 1; r < rows.length; r++) {
           const cols = rows[r];
           const get = (i) => (i >= 0 && cols[i] !== undefined ? String(cols[i]).trim() : '');
@@ -593,15 +752,11 @@ import { createMeaning } from './meaning.js';
 
           const rawLevel = (get(idx.level) || fallbackLevel).toUpperCase();
           const level = LEVELS.includes(rawLevel) ? rawLevel : fallbackLevel;
-          const baseId = get(idx.id) || `${level}_${r}_${displayWord}`;
-          if (seenIds.has(baseId)) {
-            throw new Error(`ID từ vựng bị trùng trong Sheet ${fallbackLevel}: ${baseId}`);
-          }
-          seenIds.add(baseId);
+          const id = get(idx.id) || `${level}_${r}_${displayWord}`;
           const exJa = get(idx.exJa);
 
           words.push({
-            id: baseId, level, kanji,
+            id, level, kanji,
             kana: kana || displayWord,
             furigana,
             romaji: get(idx.romaji),
@@ -615,67 +770,15 @@ import { createMeaning } from './meaning.js';
         return words;
       }
 
-      async function fetchGoogleSheetCsv(sheetId, sheetName) {
-        const encodedName = encodeURIComponent(sheetName);
-        const urls = [
-          `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedName}`,
-          `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&sheet=${encodedName}`
-        ];
-        const errors = [];
-
-        for (const url of urls) {
-          try {
-            const resp = await fetchWithTimeout(url, {
-              method: 'GET',
-              mode: 'cors',
-              credentials: 'omit',
-              cache: 'no-store',
-              headers: { 'Accept': 'text/csv,text/plain,*/*' }
-            }, 25000);
-            if (!resp.ok) {
-              errors.push(`HTTP ${resp.status}`);
-              continue;
-            }
-            const body = (await resp.text()).replace(/^\uFEFF/, '').trim();
-            if (!body) {
-              errors.push('Google trả về dữ liệu rỗng');
-              continue;
-            }
-            if (/^\s*<!doctype html|^\s*<html|accounts\.google\.com|request access|you need access/i.test(body)) {
-              errors.push('Sheet chưa được chia sẻ công khai hoặc Google yêu cầu đăng nhập');
-              continue;
-            }
-            if (/^google\.visualization\.Query\.setResponse/i.test(body)) {
-              errors.push('Google trả về định dạng GViz không phải CSV');
-              continue;
-            }
-            return body;
-          } catch (err) {
-            errors.push(err && err.message ? err.message : String(err));
-          }
-        }
-
-        throw new Error(
-          `Không tải được Sheet "${sheetName}". ` +
-          `Kiểm tra tên tab có đúng "${sheetName}" và quyền chia sẻ là "Bất kỳ ai có đường liên kết – Người xem". ` +
-          `Chi tiết: ${errors.join(' | ')}`
-        );
-      }
-
       async function syncFromGoogleSheets({ silent = false } = {}) {
         const rawUrl = $('sheetUrlInput').value.trim() || safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL);
         const sheetId = extractGoogleSheetId(rawUrl);
         if (!sheetId) {
-          if (!silent) showToast('Link Google Sheets không hợp lệ. Hãy dán link có dạng docs.google.com/spreadsheets/d/...', 'error');
+          if (!silent) showToast('Hãy dán đúng link Google Sheets (chứa /spreadsheets/d/...)', 'error');
           return false;
         }
-
         const selectedLevels = Array.from(document.querySelectorAll('.sheet-lvl:checked')).map(el => el.value);
         const levelsToFetch = selectedLevels.length ? selectedLevels : (state.prefs.sheetLevels || ['N5', 'N4', 'N3']);
-        if (!levelsToFetch.length) {
-          if (!silent) showToast('Hãy chọn ít nhất một cấp độ N5–N1 để đồng bộ.', 'error');
-          return false;
-        }
 
         safeSetLS(STORAGE_SHEET_KEY, rawUrl);
         state.prefs.sheetLevels = levelsToFetch;
@@ -683,47 +786,29 @@ import { createMeaning } from './meaning.js';
 
         const btn = $('btnSyncGoogleSheet');
         if (!silent) btn.disabled = true;
-        $('badgeSheetStatus').textContent = silent ? 'Đang kiểm tra nền...' : 'Đang tải dữ liệu...';
+        $('badgeSheetStatus').textContent = silent ? 'Đang kiểm tra nền...' : 'Đang tải...';
 
         try {
           const allWords = [];
           const loadedSheets = [];
-          const seenIds = new Set();
-
           for (const sheetName of levelsToFetch) {
-            const csvText = await fetchGoogleSheetCsv(sheetId, sheetName);
-            const rows = parseCSV(csvText);
-            if (rows.length < 2) {
-              throw new Error(`Sheet "${sheetName}" chỉ có tiêu đề hoặc không có dữ liệu.`);
+            const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+            const resp = await fetchWithTimeout(csvUrl, {}, 25000);
+            if (!resp.ok) continue;
+            const csvText = await resp.text();
+            if (csvText.trim().startsWith('<!DOCTYPE') || csvText.includes('<html')) {
+              throw new Error('Trang tính đang ở chế độ riêng tư. Hãy bật chia sẻ "Bất kỳ ai có liên kết đều xem được".');
             }
-
-            const parsed = mapSheetRowsToWords(rows, sheetName);
-            if (!parsed.length) {
-              const headerPreview = (rows[0] || []).slice(0, 13).join(' | ');
-              throw new Error(
-                `Không tìm thấy từ hợp lệ trong Sheet "${sheetName}". ` +
-                `Cần có ít nhất cột Kanji/Kana và Nghĩa. Tiêu đề đọc được: ${headerPreview}`
-              );
-            }
-
-            // If the sheet has a Level column, retain only rows belonging to its selected tab.
-            const levelWords = parsed.filter(word => word.level === sheetName);
-            if (levelWords.length) {
-              for (const word of levelWords) {
-                if (seenIds.has(word.id)) throw new Error(`ID từ vựng bị trùng giữa các Sheet: ${word.id}`);
-                seenIds.add(word.id);
-                allWords.push(word);
-              }
-              loadedSheets.push(`${sheetName}(${levelWords.length})`);
-            } else {
-              throw new Error(
-                `Sheet "${sheetName}" có dữ liệu nhưng không có bản ghi mang cấp độ ${sheetName}. ` +
-                `Hãy kiểm tra cột Level/Cấp độ và tên tab.`
-              );
+            const parsed = mapSheetRowsToWords(parseCSV(csvText), sheetName);
+            if (parsed.length) {
+              allWords.push(...parsed);
+              loadedSheets.push(`${sheetName}(${parsed.length})`);
             }
           }
 
-          if (!allWords.length) throw new Error('Không tìm thấy từ vựng hợp lệ trong các Sheet đã chọn.');
+          if (!allWords.length) {
+            throw new Error('Không đọc được dòng từ vựng nào. Kiểm tra lại tên Sheet (N5, N4, N3) hoặc quyền chia sẻ.');
+          }
 
           const prevCount = state.words.length;
           const prevFingerprint = `${state.words.length}:${state.words[0]?.id}:${state.words[state.words.length - 1]?.id}`;
@@ -734,16 +819,16 @@ import { createMeaning } from './meaning.js';
             words: allWords
           }, true, silent);
 
-          $('badgeSheetStatus').textContent = `Đã đồng bộ ${allWords.length} từ`;
-          if (!silent) showToast(`Đã đồng bộ ${allWords.length} từ từ Google Sheets (${loadedSheets.join(', ')}).`, 'success');
-          else if (prevFingerprint !== nextFingerprint || prevCount === SAMPLE_DATASET.words.length) {
-            showToast(`Đã tự cập nhật ${allWords.length} từ từ Google Sheets.`, 'success');
+          $('badgeSheetStatus').textContent = `Tự đồng bộ (${allWords.length} từ)`;
+          if (!silent) {
+            showToast(`Đã đồng bộ ${allWords.length} từ từ Google Sheets!`, 'success');
+          } else if (prevFingerprint !== nextFingerprint || prevCount === SAMPLE_DATASET.words.length) {
+            showToast(`🔄 Đã tự cập nhật ${allWords.length} từ từ Google Sheets!`, 'success');
           }
           return true;
         } catch (err) {
-          $('badgeSheetStatus').textContent = silent ? 'Không đồng bộ được – giữ dữ liệu đã lưu' : 'Lỗi đồng bộ';
-          console.error('[Kawaii JLPT] Google Sheets sync failed:', err);
-          if (!silent) showToast(err.message || 'Đồng bộ thất bại. Hãy kiểm tra link, quyền chia sẻ và tên các tab.', 'error');
+          $('badgeSheetStatus').textContent = silent ? 'Dùng bản đã lưu' : 'Lỗi đồng bộ';
+          if (!silent) showToast(err.message, 'error');
           return false;
         } finally {
           if (!silent) btn.disabled = false;
@@ -753,11 +838,80 @@ import { createMeaning } from './meaning.js';
       // =======================================================================
       // 9. FURIGANA RUBY & TAP-TO-TRANSLATE ENGINE
       // =======================================================================
-      const meaning = createMeaning({ state, $, document, builtinDictionary: BUILTIN_MINI_DICT });
-      const buildDictionaryIndex = (...args) => meaning.buildIndex(...args);
-      const lookupToken = (...args) => meaning.lookup(...args);
-      const showTranslateSheet = (...args) => meaning.showPopup(...args);
-      const hideTranslateSheet = (...args) => meaning.hidePopup(...args);
+      function buildDictionaryIndex() {
+        const idx = new Map();
+        Object.entries(BUILTIN_MINI_DICT).forEach(([k, v]) => idx.set(k, { text: k, ...v }));
+        state.words.forEach(w => {
+          const entry = {
+            text: w.kanji || w.kana,
+            reading: w.kana,
+            hanViet: w.hanViet || '',
+            meaning: w.meaning,
+            level: w.level,
+            note: [w.pos, w.topic].filter(Boolean).join(' · ')
+          };
+          if (w.kanji) idx.set(w.kanji, entry);
+          if (w.kana && !idx.has(w.kana)) idx.set(w.kana, entry);
+
+          if (w.furigana && w.furigana.includes('[')) {
+            const parts = [...w.furigana.matchAll(/(\p{Script=Han}+)\[([^\]]+)\]/gu)];
+            const hvParts = w.hanViet ? w.hanViet.split(/\s+/) : [];
+            parts.forEach((m, i) => {
+              const kChar = m[1], kRead = m[2];
+              if (kChar.length === 1 && !idx.has(kChar)) {
+                idx.set(kChar, {
+                  text: kChar, reading: kRead,
+                  hanViet: hvParts[i] || w.hanViet || '',
+                  meaning: `Trong từ "${w.kanji}" (${w.meaning})`,
+                  level: w.level,
+                  note: `Cách đọc trong ${w.kanji}: ${kRead}`
+                });
+              }
+            });
+          }
+        });
+        state.dictIndex = idx;
+      }
+
+      function lookupToken(token, parentWord = null) {
+        if (state.dictIndex.has(token)) return state.dictIndex.get(token);
+        if (parentWord && (parentWord.kanji || '').includes(token)) {
+          return {
+            text: token, reading: parentWord.kana, hanViet: parentWord.hanViet || '',
+            meaning: parentWord.meaning, level: parentWord.level,
+            note: `Thuộc từ: ${parentWord.kanji} (${parentWord.kana})`
+          };
+        }
+        return { text: token, reading: token, hanViet: '', meaning: 'Chưa có trong từ điển hiện tại', note: 'Ấn nút 🔊 để nghe cách phát âm' };
+      }
+ 
+      const meaning = window.KawaiiMeaningModule
+        ? window.KawaiiMeaningModule.create({
+            getDictionaryIndex: () => state.dictIndex,
+            lookup: lookupToken,
+            onSpeak: (text) => {
+              state.activePopupSpeakText = text;
+              speakJapaneseText(text);
+            },
+            getElements: () => ({
+              charBox: $('trCharBox'),
+              reading: $('trReading'),
+              hanViet: $('trHanViet'),
+              level: $('trLevel'),
+              meaning: $('trMeaning'),
+              note: $('trNote'),
+              sheet: $('translateSheet')
+            })
+          })
+        : null;
+
+      function showTranslateSheet(token, parentWord = null) {
+        return meaning ? meaning.showPopup(token, parentWord) : lookupToken(token, parentWord);
+      }
+
+      function hideTranslateSheet() {
+        meaning?.hidePopup();
+      }
 
       function renderCardWordWithRuby(containerEl, word) {
         containerEl.innerHTML = '';
@@ -794,79 +948,24 @@ import { createMeaning } from './meaning.js';
         }
       }
 
-      function createRubyTapToken(baseText, rtText, word) {
-        const ruby = document.createElement('ruby');
-        ruby.className = 'tap-token mx-[1px]';
-        ruby.innerHTML = `${escapeHtml(baseText)}<rt>${escapeHtml(rtText)}</rt>`;
-        ruby.onclick = (e) => {
-          e.stopPropagation();
-          document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
-          ruby.classList.add('is-active');
-          showTranslateSheet(baseText, word);
-        };
-        return ruby;
+            function createRubyTapToken(baseText, rtText, word) {
+        return meaning
+          ? meaning.createRubyToken(baseText, rtText, word)
+          : document.createTextNode(baseText);
       }
 
-      function createTapSpan(text, lookupKey, word, underline) {
-        const span = document.createElement('span');
-        span.textContent = text;
-        span.className = underline ? 'tap-token mx-[1px]' : 'tap-token border-transparent hover:border-[#FF8FA3]';
-        span.onclick = (e) => {
-          e.stopPropagation();
-          document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
-          span.classList.add('is-active');
-          showTranslateSheet(lookupKey, word);
-        };
-        return span;
+            function createTapSpan(text, lookupKey, word, underline) {
+        return meaning
+          ? meaning.createTapToken(text, lookupKey, word, { underline })
+          : document.createTextNode(text);
       }
 
-      function tokenizeJapaneseSentence(sentence) {
-        const tokens = [];
-        let i = 0;
-        while (i < sentence.length) {
-          const ch = sentence[i];
-          if (/^[。、！？「」『』（）\s.,!?]+$/.test(ch)) {
-            tokens.push({ text: ch, punct: true });
-            i++;
-            continue;
-          }
-          let matched = '';
-          const maxLen = Math.min(8, sentence.length - i);
-          for (let len = maxLen; len >= 1; len--) {
-            const sub = sentence.slice(i, i + len);
-            if (state.dictIndex.has(sub)) { matched = sub; break; }
-          }
-          if (matched) {
-            tokens.push({ text: matched, punct: false });
-            i += matched.length;
-          } else if (/^[\u30A0-\u30FFー]$/.test(ch)) {
-            let end = i + 1;
-            while (end < sentence.length && /^[\u30A0-\u30FFー]$/.test(sentence[end])) end++;
-            tokens.push({ text: sentence.slice(i, end), punct: false });
-            i = end;
-          } else {
-            tokens.push({ text: ch, punct: false });
-            i++;
-          }
-        }
-        return tokens;
+            function tokenizeJapaneseSentence(sentence) {
+        return meaning ? meaning.tokenize(sentence) : [];
       }
 
-      function renderInteractiveExample(containerEl, sentence, parentWord) {
-        containerEl.innerHTML = '';
-        tokenizeJapaneseSentence(sentence).forEach(tk => {
-          if (tk.punct) { containerEl.appendChild(document.createTextNode(tk.text)); return; }
-          const span = document.createElement('span');
-          span.textContent = tk.text;
-          span.className = state.dictIndex.has(tk.text) ? 'tap-token mx-[1px]' : 'tap-token border-transparent hover:border-[#FF8FA3]';
-          span.onclick = (e) => {
-            e.stopPropagation();
-            document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
-            span.classList.add('is-active');
-            showTranslateSheet(tk.text, parentWord);
-          };
-          containerEl.appendChild(span);
-        });
+            function renderInteractiveExample(containerEl, sentence, parentWord) {
+        if (meaning) meaning.renderSentence(containerEl, sentence, parentWord);
       }
 
       // =======================================================================
@@ -924,26 +1023,39 @@ import { createMeaning } from './meaning.js';
         cancelCardMove();
         const now = Date.now();
         const pool = getBasePool();
+
+        // SMART là phiên học chính: 10 từ, trộn từ mới và từ đến hạn.
+        // Phiên đang học được khôi phục, không tự tạo phiên mới khi tải lại trang.
+        if (state.prefs.fcFilter === 'SMART' && window.KawaiiFlashcards) {
+          const savedSession = studySession.getSnapshot();
+          if (savedSession && savedSession.status === 'active') {
+            state.fcDeck = flashcards.restore();
+          } else if (savedSession && savedSession.status === 'completed') {
+            state.fcDeck = [];
+          } else {
+            const dueList = pool.filter(w => isWordDue(w.id, now));
+            const newList = pool.filter(w => isWordNew(w.id));
+            state.fcDeck = flashcards.start(shuffle ? shuffled([...dueList, ...newList]) : [...dueList, ...newList], { limit: 10 });
+          }
+          state.fcIndex = 0;
+          state.fcFlipped = false;
+          const snapshot = studySession.getSnapshot();
+          state.sessionStats = snapshot
+            ? { reviewed: snapshot.stats.reviewed, good: snapshot.stats.good + snapshot.stats.hard, again: snapshot.stats.again }
+            : { reviewed: 0, good: 0, again: 0 };
+          return;
+        }
+
+        // Các bộ lọc DUE / NEW / ALL vẫn giữ cơ chế duyệt từ tương thích bản cũ.
         const dueList = pool.filter(w => isWordDue(w.id, now)).sort((a, b) => (getWordStat(a.id)?.nextReviewAt || 0) - (getWordStat(b.id)?.nextReviewAt || 0));
         const newList = pool.filter(w => isWordNew(w.id));
-
         let deck = [];
-        if (state.prefs.fcFilter === 'SMART') {
-          deck = [...dueList, ...newList];
-        } else if (state.prefs.fcFilter === 'DUE') {
-          deck = dueList;
-        } else if (state.prefs.fcFilter === 'NEW') {
-          deck = newList;
-        } else {
-          deck = pool;
-        }
-
+        if (state.prefs.fcFilter === 'DUE') deck = dueList;
+        else if (state.prefs.fcFilter === 'NEW') deck = newList;
+        else deck = pool;
         const limit = Number(state.prefs.sessionSize) || 0;
-        if (limit > 0 && state.prefs.fcFilter !== 'ALL') {
-          deck = deck.slice(0, limit);
-        }
+        if (limit > 0 && state.prefs.fcFilter !== 'ALL') deck = deck.slice(0, limit);
         if (shuffle) deck = shuffled(deck);
-
         state.fcDeck = deck;
         state.fcIndex = 0;
         state.fcFlipped = false;
@@ -1043,14 +1155,24 @@ import { createMeaning } from './meaning.js';
         });
 
         const total = state.fcDeck.length;
+        const managedSession = state.prefs.fcFilter === 'SMART' &&
+          studySession && studySession.getSnapshot()?.status === 'active';
         ['fcPrevBtn', 'fcNextBtn', 'fcRateAgainBtn', 'fcRateHardBtn', 'fcRateGoodBtn', 'fcShuffleBtn'].forEach(id => { $(id).disabled = !total; });
-        $('fcCounter').textContent = total ? `${state.fcIndex + 1} / ${total}` : '0 / 0';
+        if (managedSession) {
+          $('fcPrevBtn').disabled = true;
+          $('fcNextBtn').disabled = true;
+          const snapshot = studySession.getSnapshot();
+          $('fcCounter').textContent = `${snapshot.completedWordIds.length + 1} / ${snapshot.initialWordIds.length}`;
+        } else {
+          $('fcCounter').textContent = total ? `${state.fcIndex + 1} / ${total}` : '0 / 0';
+        }
 
         if (!total) {
           $('fcPerspective').classList.add('hidden');
           $('fcEmptyFilter').classList.remove('hidden');
           const didStudy = state.sessionStats.reviewed > 0;
           $('fcSessionSummary').classList.toggle('hidden', !didStudy);
+          $('btnStartQuizAfterSession').classList.toggle('hidden', getQuizEligibleWords().length < 4);
           if (didStudy) {
             $('fcEmptyIcon').textContent = '🎉';
             $('fcEmptyTitle').textContent = 'Hoàn thành phiên học xuất sắc!';
@@ -1165,6 +1287,33 @@ import { createMeaning } from './meaning.js';
         }, 140);
       }
 
+      function startNewStudySession() {
+        if (!studySession || !flashcards) {
+          rebuildFlashcardDeck();
+          renderFlashcard();
+          return;
+        }
+        studySession.clear();
+        state.prefs.fcFilter = 'SMART';
+        savePrefs();
+        const now = Date.now();
+        const pool = getBasePool();
+        const dueList = pool.filter(w => isWordDue(w.id, now));
+        const newList = pool.filter(w => isWordNew(w.id));
+        state.fcDeck = flashcards.start([...dueList, ...newList], { limit: 10 });
+        state.fcIndex = 0;
+        state.fcFlipped = false;
+        const snapshot = studySession.getSnapshot();
+        state.sessionStats = snapshot
+          ? { reviewed: 0, good: 0, again: 0 }
+          : { reviewed: 0, good: 0, again: 0 };
+        renderHeader();
+        renderFlashcard();
+        if (!state.fcDeck.length) {
+          showToast('Hiện không có từ mới hoặc từ đến hạn để bắt đầu phiên.', 'info');
+        }
+      }
+
       function handleFlashcardRating(rating) {
         if (!state.fcDeck.length) return;
         cancelCardMove();
@@ -1172,28 +1321,68 @@ import { createMeaning } from './meaning.js';
         hideTranslateSheet();
 
         const word = state.fcDeck[state.fcIndex];
-        const next = rateWordSrs(word.id, rating);
-        state.sessionStats.reviewed += 1;
-        if (rating === 'again') {
-          state.sessionStats.again += 1;
-          showToast(`Sẽ nhắc lại "${word.kanji || word.kana}" ở cuối phiên!`, 'info');
-        } else {
-          state.sessionStats.good += 1;
-          showToast(`Đã lưu lịch ôn "${word.kanji || word.kana}" sau ${next.intervalDays} ngày ✅`, 'success');
-        }
-        events.emit('word:rated', { word, rating, stat: next });
+        let next;
+        const isManagedSession = state.prefs.fcFilter === 'SMART' &&
+          studySession && flashcards &&
+          studySession.getSnapshot()?.status === 'active';
 
-        if (state.prefs.fcFilter !== 'ALL') {
-          state.fcDeck.splice(state.fcIndex, 1);
-          if (rating === 'again') state.fcDeck.push(word);
-          if (state.fcIndex >= state.fcDeck.length) state.fcIndex = 0;
-        } else {
-          state.fcIndex = (state.fcIndex + 1) % state.fcDeck.length;
+        try {
+          if (isManagedSession) {
+            const result = flashcards.rate(word.id, rating);
+            next = result.stat;
+            state.fcDeck = result.deck;
+            state.fcIndex = 0;
+            state.sessionStats = {
+              reviewed: result.session.stats.reviewed,
+              good: result.session.stats.firstAttemptCorrect || 0,
+              again: result.session.stats.again
+            };
+            if (result.completed) {
+              events.emit('session:completed', {
+                session: result.session,
+                stats: { ...result.session.stats }
+              });
+            }
+          } else {
+            next = rateWordSrs(word.id, rating);
+            state.sessionStats.reviewed += 1;
+            if (rating === 'again') state.sessionStats.again += 1;
+            else state.sessionStats.good += 1;
+
+            if (state.prefs.fcFilter !== 'ALL') {
+              state.fcDeck.splice(state.fcIndex, 1);
+              if (rating === 'again') state.fcDeck.push(word);
+              if (state.fcIndex >= state.fcDeck.length) state.fcIndex = 0;
+            } else {
+              state.fcIndex = (state.fcIndex + 1) % state.fcDeck.length;
+            }
+          }
+        } catch (error) {
+          console.error('[Kawaii Flashcard]', error);
+          showToast('Không thể lưu kết quả học: ' + (error?.message || 'Lỗi dữ liệu'), 'error');
+          return;
         }
+
+        const activeSnapshot = studySession?.getSnapshot();
+        const reviewSessionId = (isManagedSession && activeSnapshot?.id)
+          ? activeSnapshot.id
+          : (state.fcReviewSessionId || (state.fcReviewSessionId = `fc_browse_${Date.now()}`));
+        if (weakWords) {
+          if (rating === 'again') weakWords.recordError(word.id, 'flashcard', reviewSessionId);
+          else weakWords.recordCorrect(word.id, 'flashcard', reviewSessionId);
+        }
+
+        if (rating === 'again') {
+          showToast(`Sẽ gặp lại "${word.kanji || word.kana}" ở cuối hàng đợi phiên!`, 'info');
+        } else {
+          showToast(`Đã lưu lịch ôn "${word.kanji || word.kana}" sau ${next.intervalDays} ngày.`, 'success');
+        }
+        events.emit('word:rated', { word, rating, stat: next, sessionId: reviewSessionId });
         state.fcFlipped = false;
         renderHeader();
         renderFlashcard();
       }
+
 
       // --- Pair Matching ---
       function initMatchingRound() {
@@ -1475,8 +1664,227 @@ import { createMeaning } from './meaning.js';
         renderHeader();
       }
 
+
+      // =======================================================================
+      // 12A. FEATURE MODULES (PHASE 3)
+      // =======================================================================
+      const studySession = window.KawaiiStudySessionModule
+        ? window.KawaiiStudySessionModule.create()
+        : null;
+      if (studySession) studySession.load();
+
+      const flashcards = window.KawaiiFlashcardModule && studySession
+        ? window.KawaiiFlashcardModule.create({
+            session: studySession,
+            getWord: (wordId) => state.wordMap.get(wordId) || null,
+            srs: { rateWord: rateWordSrs }
+          })
+        : null;
+
+      const weakWords = window.KawaiiWeakWordsModule
+        ? window.KawaiiWeakWordsModule.create()
+        : null;
+
+      const quiz = window.KawaiiQuizModule && weakWords
+        ? window.KawaiiQuizModule.create({
+            getErrorCount: (wordId) => weakWords.getErrorCount(wordId),
+            onWrong: ({ wordId, quizId, attemptNo }) => {
+              weakWords.recordError(wordId, 'quiz', quizId, { attemptNo });
+              events.emit('quiz:answer-wrong', { wordId, quizId, attemptNo });
+            },
+            onCorrect: ({ wordId, quizId }) => {
+              weakWords.recordCorrect(wordId, 'quiz', quizId);
+              events.emit('quiz:answer-correct', { wordId, quizId });
+            },
+            onComplete: (result) => events.emit('quiz:completed', result)
+          })
+        : null;
+
+      window.KawaiiStudySession = studySession;
+      window.KawaiiFlashcards = flashcards;
+      window.KawaiiWeakWords = weakWords;
+      window.KawaiiQuiz = quiz;
+
+      // =======================================================================
+      // 12A. CORE API (PHASE 2) - GIỮ TƯƠNG THÍCH PLUGIN CŨ
+      // =======================================================================
+      const Core = (() => {
+        const stateSubscribers = new Set();
+        let bootPromise = null;
+
+        function readPath(root, path) {
+          if (!path) return root;
+          return String(path).split('.').reduce((value, key) => (
+            value == null ? undefined : value[key]
+          ), root);
+        }
+
+        function emitStateChange(path, value) {
+          const payload = { path, value, state };
+          stateSubscribers.forEach((fn) => {
+            try { fn(payload); } catch (error) {
+              console.error('[Kawaii Core State]', error);
+            }
+          });
+          events.emit('state:changed', payload);
+        }
+
+        const State = Object.freeze({
+          get(path) {
+            return readPath(state, path);
+          },
+          set(path, value) {
+            if (typeof path !== 'string' || !path.trim()) {
+              throw new TypeError('State.set cần path hợp lệ.');
+            }
+            const keys = path.split('.');
+            let target = state;
+            for (const key of keys.slice(0, -1)) {
+              if (!target[key] || typeof target[key] !== 'object') target[key] = {};
+              target = target[key];
+            }
+            target[keys[keys.length - 1]] = value;
+            emitStateChange(path, value);
+            return value;
+          },
+          patch(data) {
+            if (!data || typeof data !== 'object' || Array.isArray(data)) {
+              throw new TypeError('State.patch cần object.');
+            }
+            Object.entries(data).forEach(([key, value]) => {
+              state[key] = value;
+              emitStateChange(key, value);
+            });
+            return state;
+          },
+          resetSession() {
+            state.fcDeck = [];
+            state.fcIndex = 0;
+            state.fcFlipped = false;
+            state.sessionStats = { reviewed: 0, good: 0, again: 0 };
+            emitStateChange('learning.session', null);
+          },
+          subscribe(fn) {
+            if (typeof fn !== 'function') throw new TypeError('Subscriber phải là function.');
+            stateSubscribers.add(fn);
+            return () => stateSubscribers.delete(fn);
+          }
+        });
+
+        const Modules = Object.freeze({
+          register(config) {
+            if (!config || typeof config !== 'object' || !config.id) {
+              throw new TypeError('Module cần id hợp lệ.');
+            }
+            if (registeredModules.has(config.id)) {
+              throw new Error('Module đã đăng ký: ' + config.id);
+            }
+            registerModule(config);
+            return registeredModules.has(config.id);
+          },
+          get(id) {
+            const module = registeredModules.get(id);
+            if (!module) return null;
+            return {
+              id: module.id,
+              label: module.label,
+              icon: module.icon
+            };
+          },
+          getAll() {
+            return Array.from(registeredModules.values()).map((module) => ({
+              id: module.id,
+              label: module.label,
+              icon: module.icon
+            }));
+          },
+          activate(id) {
+            if (!registeredModules.has(id)) return false;
+            state.mode = id;
+            renderAll();
+            events.emit('mode:changed', { mode: id });
+            return true;
+          }
+        });
+
+        const SRS = Object.freeze({
+          getWordStat,
+          getWordSrsInfo,
+          isWordNew,
+          isWordDue,
+          isWordLearned,
+          rateWord: rateWordSrs,
+          rateWordSrs,
+          calculateNext: calculateSrsNext,
+          rebuild(wordId) {
+            // Giai đoạn 2 chưa có Event Log đầy đủ; không giả lập lịch sử.
+            // Trả trạng thái hiện tại và chờ Event Repository ở giai đoạn sau.
+            return getWordStat(wordId);
+          },
+          getAlgorithmInfo() {
+            return {
+              version: 1,
+              intervalsDays: [...SRS_INTERVALS_DAYS],
+              againMinutes: 5,
+              hardDays: 1
+            };
+          }
+        });
+
+        const Data = Object.freeze({
+          words: Object.freeze({
+            getAll: () => getBasePool(),
+            getById: (wordId) => state.wordMap.get(wordId) || null,
+            getBasePool: () => getBasePool(),
+            applyDataset: (dataset, ...args) => applyDataset(dataset, ...args)
+          }),
+          progress: Object.freeze({
+            get: (wordId) => getWordStat(wordId),
+            getAll: () => ({ ...state.progress.wordStats }),
+            save: () => saveProgress()
+          })
+        });
+
+        const UI = Object.freeze({
+          renderAll,
+          showToast
+        });
+
+        const Bootstrap = Object.freeze({
+          start() {
+            if (!bootPromise) bootPromise = bootstrap();
+            return bootPromise;
+          },
+          get started() {
+            return !!bootPromise;
+          }
+        });
+
+        return Object.freeze({
+          version: '3.4.0-core',
+          State,
+          Events: events,
+          Modules,
+          SRS,
+          Data,
+          UI,
+          StudySession: studySession,
+          Flashcards: flashcards,
+          Quiz: quiz,
+          WeakWords: weakWords,
+          Bootstrap
+        });
+      })();
+
       window.KawaiiApp = {
-        version: '3.0.0',
+        version: '3.4.0',
+        Core,
+        studySession,
+        flashcards,
+        quiz,
+        weakWords,
+        pronunciation,
+        meaning,
         state,
         events,
         registerModule,
@@ -1484,10 +1892,214 @@ import { createMeaning } from './meaning.js';
         applyDataset,
         renderAll,
         showToast,
-        srs: { getWordStat, getWordSrsInfo, rateWordSrs, isWordDue, isWordNew, isWordLearned },
-        tts: { speak: speakJapaneseText, speakWord, speakKana: speakKanaItem, stop: stopAudio, initMarine: initZenTtsFromCacheOrNetwork, getStatus: pronunciation.getStatus },
-        dict: { lookup: lookupToken, tokenize: tokenizeJapaneseSentence, showPopup: showTranslateSheet, hidePopup: hideTranslateSheet }
+        srs: {
+          getWordStat, getWordSrsInfo, rateWordSrs,
+          isWordDue, isWordNew, isWordLearned,
+          calculateNext: calculateSrsNext,
+          getAlgorithmInfo: Core.SRS.getAlgorithmInfo
+        },
+        tts: {
+          speak: speakJapaneseText, speakWord, speakKana: speakKanaItem,
+          stop: stopAudio, clearCache: clearWavCache,
+          initMarine: initZenTtsFromCacheOrNetwork,
+          module: pronunciation
+        },
+        dict: {
+          lookup: lookupToken, tokenize: tokenizeJapaneseSentence,
+          showPopup: showTranslateSheet, hidePopup: hideTranslateSheet,
+          module: meaning
+        }
       };
+
+
+      // =======================================================================
+      // 12B. QUIZ + WEAK WORDS UI MODULES (PHASE 4)
+      // =======================================================================
+      function getQuizEligibleWords() {
+        return state.words.filter(word => {
+          const progress = getWordStat(word.id);
+          const hasBeenStudied = !!(progress && ((progress.reps || 0) > 0 || (progress.lapses || 0) > 0));
+          return hasBeenStudied && !!word.meaning && !!(word.kanji || word.kana);
+        });
+      }
+
+      function startQuiz(count = 10) {
+        const eligible = getQuizEligibleWords();
+        const completedSession = studySession?.getSnapshot();
+        const flashcardScore = completedSession?.status === 'completed'
+          ? (completedSession.stats?.firstAttemptCorrect || 0)
+          : 0;
+        try {
+          quiz.start(eligible, count, flashcardScore);
+          state.mode = 'quiz';
+          renderAll();
+        } catch (error) {
+          showToast(error.message || 'Không thể tạo bài trắc nghiệm.', 'error');
+        }
+      }
+
+      function renderQuizModule(sectionEl) {
+        if (!quiz) return;
+        const snapshot = quiz.snapshot();
+        const eligibleCount = getQuizEligibleWords().length;
+
+        if (!snapshot) {
+          sectionEl.innerHTML = `
+            <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 sm:p-7 shadow-soft flex flex-col gap-4">
+              <div>
+                <h2 class="text-lg font-extrabold text-[#332E2E]">📝 Trắc nghiệm từ đã học</h2>
+                <p class="text-sm text-[#786D69] mt-1">Câu hỏi lấy từ toàn bộ kho từ bạn đã từng học, không giới hạn cấp độ hay chủ đề hiện tại.</p>
+              </div>
+              <div class="rounded-2xl bg-[#F8F5FF] p-4">
+                <p class="text-sm font-bold text-[#514477]">Hiện có ${eligibleCount} từ đủ điều kiện kiểm tra.</p>
+                <p class="text-xs text-[#786D69] mt-1">Mỗi bài có 10 câu; có thể chọn 15 câu khi muốn tăng độ dài. Câu hỏi trộn Nhật → Việt và Việt → Nhật.</p>
+              </div>
+              <div class="flex items-center gap-3 flex-wrap">
+                <label class="text-sm font-bold text-[#4A4240]" for="quizCountSelect">Số câu</label>
+                <select id="quizCountSelect" class="rounded-xl border border-[#E8DFD6] bg-white px-3 py-2 text-sm font-bold">
+                  <option value="10">10 câu</option><option value="15">15 câu</option>
+                </select>
+                <button id="quizStartBtn" ${eligibleCount < 4 ? 'disabled' : ''} class="rounded-xl bg-[#5B8DEF] px-5 py-2.5 text-sm font-extrabold text-white disabled:opacity-40">Bắt đầu trắc nghiệm</button>
+              </div>
+              ${eligibleCount < 4 ? '<p class="text-xs text-[#B45309]">Cần ít nhất 4 từ đã từng học và có nghĩa để tạo câu hỏi.</p>' : ''}
+            </div>`;
+          sectionEl.querySelector('#quizStartBtn')?.addEventListener('click', () => {
+            const count = Number(sectionEl.querySelector('#quizCountSelect')?.value) || 10;
+            startQuiz(count);
+          });
+          return;
+        }
+
+        if (snapshot.status === 'completed') {
+          const stats = quiz.getStats();
+          sectionEl.innerHTML = `
+            <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 sm:p-7 shadow-soft flex flex-col gap-4">
+              <div class="text-center">
+                <div class="text-4xl mb-2">🎉</div>
+                <h2 class="text-xl font-extrabold text-[#332E2E]">Hoàn thành trắc nghiệm</h2>
+                <p class="text-sm text-[#786D69] mt-1">Điểm tính theo tổng số thao tác đúng.</p>
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                <div class="rounded-2xl bg-[#F8F5FF] p-3"><p class="text-xs text-[#786D69]">Điểm Flashcard</p><p class="text-2xl font-extrabold">${stats.flashcardScore}</p></div>
+                <div class="rounded-2xl bg-[#EFF6FF] p-3"><p class="text-xs text-[#786D69]">Đúng Quiz</p><p class="text-2xl font-extrabold">${stats.correctActions}</p></div>
+                <div class="rounded-2xl bg-[#ECFDF5] p-3"><p class="text-xs text-[#786D69]">Tổng điểm</p><p class="text-2xl font-extrabold text-[#047857]">${stats.totalScore}</p></div>
+                <div class="rounded-2xl bg-[#FFF1F2] p-3"><p class="text-xs text-[#786D69]">Lượt sai</p><p class="text-2xl font-extrabold text-[#BE123C]">${stats.wrongActions}</p></div>
+              </div>
+              <p class="text-xs text-[#786D69] text-center">Lượt hỏi lại được tính điểm nếu trả lời đúng. Lượt sai ở cả vòng đầu và vòng hỏi lại đều được ghi nhận.</p>
+              <div class="flex justify-center gap-2 flex-wrap">
+                <button id="quizAgainBtn" class="rounded-xl bg-[#5B8DEF] px-5 py-2.5 text-sm font-extrabold text-white">Làm bài khác</button>
+                <button id="quizNextSessionBtn" class="rounded-xl bg-[#FB6F92] px-5 py-2.5 text-sm font-extrabold text-white">Học phiên Flashcard tiếp theo</button>
+              </div>
+            </div>`;
+          sectionEl.querySelector('#quizAgainBtn')?.addEventListener('click', () => startQuiz(snapshot.questionCount));
+          sectionEl.querySelector('#quizNextSessionBtn')?.addEventListener('click', () => {
+            state.mode = 'flashcard';
+            startNewStudySession();
+          });
+          return;
+        }
+
+        const question = quiz.currentQuestion();
+        if (!question) {
+          sectionEl.innerHTML = '<div class="bg-white rounded-3xl p-6">Không tìm thấy câu hỏi hiện tại.</div>';
+          return;
+        }
+        const feedback = snapshot.currentFeedback;
+        const phaseLabel = snapshot.phase === 'first' ? 'Lượt đầu' : 'Lượt hỏi lại';
+        const progressLabel = snapshot.phase === 'first'
+          ? `${snapshot.index + 1}/${snapshot.questions.length}`
+          : `${snapshot.index + 1}/${snapshot.retryQuestions.length}`;
+        const optionsHtml = question.options.map((option, index) => {
+          const isCorrect = feedback && option === feedback.correctAnswer;
+          const isSelectedWrong = feedback && option === feedback.selectedAnswer && !feedback.correct;
+          const cls = isCorrect ? 'border-[#10B981] bg-[#ECFDF5] text-[#047857]'
+            : isSelectedWrong ? 'border-[#F43F5E] bg-[#FFF1F2] text-[#BE123C]'
+            : 'border-[#E8DFD6] bg-white text-[#4A4240] hover:border-[#A5B4FC]';
+          return `<button data-quiz-answer="${escapeHtml(option)}" ${feedback ? 'disabled' : ''} class="w-full text-left border-2 ${cls} rounded-2xl px-4 py-3 text-sm font-bold disabled:cursor-default"><span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-black/5 mr-2">${'ABCD'[index]}</span>${escapeHtml(option)}</button>`;
+        }).join('');
+        sectionEl.innerHTML = `
+          <div class="bg-white border border-[#F1ECE6] rounded-3xl p-4 sm:p-6 shadow-soft flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-2">
+              <div><p class="text-xs font-extrabold text-[#5B8DEF]">${phaseLabel}</p><h2 class="text-lg font-extrabold text-[#332E2E]">Câu ${progressLabel}</h2></div>
+              <div class="text-right"><p class="text-xs text-[#786D69]">Điểm hiện tại</p><p class="text-xl font-extrabold">${snapshot.score}</p></div>
+            </div>
+            <div class="h-2 rounded-full bg-[#F3ECE4] overflow-hidden"><div class="h-full bg-[#5B8DEF]" style="width:${Math.min(100, (snapshot.attempts.length / Math.max(1, snapshot.questionCount + snapshot.retryQueue.length)) * 100)}%"></div></div>
+            <div class="rounded-2xl bg-[#F8F5FF] p-5 text-center">
+              <p class="text-xs font-bold text-[#786D69]">${question.direction === 'word-to-meaning' ? 'Chọn nghĩa tiếng Việt đúng' : 'Chọn từ tiếng Nhật đúng'}</p>
+              <p class="mt-2 text-2xl sm:text-3xl font-extrabold ${question.direction === 'word-to-meaning' ? 'font-jp' : ''}">${escapeHtml(question.prompt)}</p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${optionsHtml}</div>
+            ${feedback ? `
+              <div class="rounded-2xl p-4 ${feedback.correct ? 'bg-[#ECFDF5] text-[#047857]' : 'bg-[#FFF1F2] text-[#BE123C]'}">
+                <p class="font-extrabold">${feedback.correct ? 'Chính xác!' : 'Chưa chính xác'}</p>
+                <p class="text-sm mt-1">Đáp án đúng: <strong>${escapeHtml(feedback.correctAnswer)}</strong></p>
+                <p class="text-sm mt-1 text-[#4A4240]">Nghĩa: ${escapeHtml(feedback.meaning)}</p>
+              </div>
+              <button id="quizNextBtn" class="w-full rounded-xl bg-[#5B8DEF] px-5 py-3 text-sm font-extrabold text-white">Câu tiếp theo</button>
+            ` : ''}
+          </div>`;
+        sectionEl.querySelectorAll('[data-quiz-answer]').forEach(button => {
+          button.addEventListener('click', () => {
+            try { quiz.answer(button.dataset.quizAnswer); renderQuizModule(sectionEl); }
+            catch (error) { showToast(error.message, 'error'); }
+          });
+        });
+        sectionEl.querySelector('#quizNextBtn')?.addEventListener('click', () => {
+          try { quiz.next(); renderQuizModule(sectionEl); }
+          catch (error) { showToast(error.message, 'error'); }
+        });
+      }
+
+      function renderWeakWordsModule(sectionEl) {
+        if (!weakWords) return;
+        const records = weakWords.getWeak();
+        const summary = weakWords.getSummary();
+        const cards = records.map(record => {
+          const word = state.wordMap.get(record.wordId);
+          if (!word) return '';
+          return `<article class="rounded-2xl border border-[#F1D6D9] bg-white p-4 flex flex-col gap-2">
+            <div class="flex items-start justify-between gap-2">
+              <div><p class="text-xl font-extrabold font-jp">${escapeHtml(word.kanji || word.kana)}</p><p class="text-xs text-[#786D69]">${escapeHtml(word.kana || '')} · ${escapeHtml(word.romaji || '')}</p></div>
+              <span class="rounded-full bg-[#FFF1F2] px-3 py-1 text-xs font-extrabold text-[#BE123C]">${record.errorCount} lỗi</span>
+            </div>
+            <p class="text-sm text-[#4A4240]">${escapeHtml(word.meaning || '')}</p>
+            <p class="text-[11px] text-[#8C7F7A]">Đúng Flashcard: ${record.flashcardCorrectSessions.length}/2 phiên · Đúng Quiz: ${record.quizCorrectSessions.length}/2 phiên</p>
+            <button data-dismiss-weak="${escapeHtml(record.wordId)}" class="self-start rounded-xl bg-[#F6EFE8] px-3 py-2 text-xs font-extrabold text-[#5E524E]">Bỏ khỏi Sổ từ yếu</button>
+          </article>`;
+        }).join('');
+        sectionEl.innerHTML = `
+          <div class="bg-white border border-[#F1ECE6] rounded-3xl p-4 sm:p-6 shadow-soft flex flex-col gap-4">
+            <div><h2 class="text-lg font-extrabold text-[#332E2E]">📕 Sổ từ yếu</h2><p class="text-sm text-[#786D69] mt-1">Tự động thêm từ khi có ít nhất 2 lỗi cộng dồn từ Flashcard và Quiz.</p></div>
+            <div class="grid grid-cols-3 gap-2 text-center">
+              <div class="rounded-2xl bg-[#FFF1F2] p-3"><p class="text-xs text-[#786D69]">Từ yếu</p><p class="text-xl font-extrabold">${summary.weak}</p></div>
+              <div class="rounded-2xl bg-[#F8F5FF] p-3"><p class="text-xs text-[#786D69]">Từ đã theo dõi</p><p class="text-xl font-extrabold">${summary.totalTracked}</p></div>
+              <div class="rounded-2xl bg-[#FFF7ED] p-3"><p class="text-xs text-[#786D69]">Tổng lỗi</p><p class="text-xl font-extrabold">${summary.errors}</p></div>
+            </div>
+            ${cards ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>` : '<div class="rounded-2xl bg-[#ECFDF5] p-5 text-center text-sm font-bold text-[#047857]">Chưa có từ yếu. Tiếp tục học và làm trắc nghiệm để hệ thống đánh giá tự động.</div>'}
+          </div>`;
+        sectionEl.querySelectorAll('[data-dismiss-weak]').forEach(button => {
+          button.addEventListener('click', () => {
+            weakWords.dismiss(button.dataset.dismissWeak);
+            renderWeakWordsModule(sectionEl);
+            showToast('Đã bỏ trạng thái từ yếu; lịch sử lỗi vẫn được giữ.', 'success');
+          });
+        });
+      }
+
+      if (quiz) {
+        registerModule({
+          id: 'quiz', label: 'Trắc nghiệm', icon: '📝',
+          mount: (sectionEl) => { sectionEl.innerHTML = ''; },
+          render: (sectionEl) => renderQuizModule(sectionEl)
+        });
+      }
+      if (weakWords) {
+        registerModule({
+          id: 'weak-words', label: 'Sổ từ yếu', icon: '📕',
+          mount: (sectionEl) => { sectionEl.innerHTML = ''; },
+          render: (sectionEl) => renderWeakWordsModule(sectionEl)
+        });
+      }
 
       // =======================================================================
       // 13. EVENT BINDINGS
@@ -1553,7 +2165,7 @@ import { createMeaning } from './meaning.js';
         });
       }
 
-      bindSwipeAndFlip($('fcPerspective'), flipFlashcard, () => moveCard(-1), () => moveCard(1), () => !state.fcDeck.length || cardMoveTimer !== null);
+      bindSwipeAndFlip($('fcPerspective'), flipFlashcard, () => handleFlashcardRating('good'), () => handleFlashcardRating('again'), () => !state.fcDeck.length || cardMoveTimer !== null);
       bindSwipeAndFlip($('kanaPerspective'), flipKanaCard, () => moveKanaCard(-1), () => moveKanaCard(1), () => !state.kanaDeck.length || kanaMoveTimer !== null);
 
       $('fcSpeakFrontBtn').onclick = (e) => { e.stopPropagation(); speakWord(state.fcDeck[state.fcIndex]); };
@@ -1564,14 +2176,27 @@ import { createMeaning } from './meaning.js';
       $('fcRateGoodBtn').onclick = () => handleFlashcardRating('good');
       $('fcPrevBtn').onclick = () => moveCard(-1);
       $('fcNextBtn').onclick = () => moveCard(1);
-      $('fcShuffleBtn').onclick = () => { state.fcDeck = shuffled(state.fcDeck); state.fcIndex = 0; state.fcFlipped = false; renderFlashcard(); showToast('Đã xáo trộn phiên học!'); };
-      $('btnStartNextSession').onclick = () => { rebuildFlashcardDeck(); renderFlashcard(); };
-      $('btnViewAllCards').onclick = () => { state.prefs.fcFilter = 'ALL'; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
-      $('sessionSizeSelect').onchange = (e) => {
-        state.prefs.sessionSize = Number(e.target.value) || 0;
-        savePrefs();
-        rebuildFlashcardDeck();
+      $('fcShuffleBtn').onclick = () => {
+        const reordered = shuffled(state.fcDeck);
+        if (state.prefs.fcFilter === 'SMART' && studySession?.getSnapshot()?.status === 'active') {
+          state.fcDeck = flashcards.reorder(reordered.map(word => word.id)) || state.fcDeck;
+        } else {
+          state.fcDeck = reordered;
+        }
+        state.fcIndex = 0;
+        state.fcFlipped = false;
         renderFlashcard();
+        showToast('Đã xáo trộn hàng đợi học!');
+      };
+      $('btnStartNextSession').onclick = startNewStudySession;
+      $('btnStartQuizAfterSession').onclick = () => startQuiz(10);
+      $('btnViewAllCards').onclick = () => { state.prefs.fcFilter = 'ALL'; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
+      $('sessionSizeSelect').value = '10';
+      $('sessionSizeSelect').disabled = true;
+      state.prefs.sessionSize = 10;
+      $('sessionSizeSelect').onchange = () => {
+        $('sessionSizeSelect').value = '10';
+        showToast('Phiên học hiện được cố định ở 10 từ.', 'info');
       };
       document.querySelectorAll('.fc-filter-btn').forEach(btn => {
         btn.onclick = () => { state.prefs.fcFilter = btn.dataset.filter; savePrefs(); rebuildFlashcardDeck(); renderFlashcard(); };
@@ -1611,8 +2236,16 @@ import { createMeaning } from './meaning.js';
         if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(document.activeElement.tagName)) return;
         if (state.mode === 'flashcard' && state.fcDeck.length) {
           if (e.code === 'Space') { e.preventDefault(); flipFlashcard(); }
-          else if (e.code === 'ArrowRight') { e.preventDefault(); moveCard(1); }
-          else if (e.code === 'ArrowLeft') { e.preventDefault(); moveCard(-1); }
+          else if (e.code === 'ArrowRight') {
+            e.preventDefault();
+            if (state.prefs.fcFilter === 'SMART') handleFlashcardRating('good');
+            else moveCard(1);
+          }
+          else if (e.code === 'ArrowLeft') {
+            e.preventDefault();
+            if (state.prefs.fcFilter === 'SMART') handleFlashcardRating('again');
+            else moveCard(-1);
+          }
           else if (e.key === '1') handleFlashcardRating('again');
           else if (e.key === '2') handleFlashcardRating('hard');
           else if (e.key === '3') handleFlashcardRating('good');
@@ -1853,21 +2486,45 @@ import { createMeaning } from './meaning.js';
 
       function buildSeparatedHtml() {
         const clone = CLEAN_HTML_CLONE.cloneNode(true);
-        clone.querySelectorAll('style').forEach(styleEl => {
-          if (styleEl.id === 'appCustomStyles') {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = 'styles.css';
-            styleEl.replaceWith(link);
-          } else styleEl.remove();
-        });
-        const coreScript = clone.querySelector('#appCoreScript');
-        if (coreScript) {
-          const extScript = document.createElement('script');
-          extScript.src = 'app.js';
-          coreScript.replaceWith(extScript);
+
+        clone.querySelectorAll('style').forEach(styleEl => styleEl.remove());
+        if (!clone.querySelector('link[rel="stylesheet"][href="styles.css"]')) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = 'styles.css';
+          clone.querySelector('head')?.appendChild(link);
         }
-        return '<!DOCTYPE html>\n' + clone.outerHTML;
+
+        clone.querySelectorAll('#appCoreScript').forEach(script => script.remove());
+        const body = clone.querySelector('body');
+        if (body) {
+          body.querySelectorAll('script[src="database.js"], script[src="study-session.js"], script[src="flashcard.js"], script[src="quiz.js"], script[src="weak-words.js"], script[src="pronunciation.js"], script[src="meaning.js"], script[src="app.js"]').forEach(script => script.remove());
+          const databaseScript = document.createElement('script');
+          databaseScript.src = 'database.js';
+          const sessionScript = document.createElement('script');
+          sessionScript.src = 'study-session.js';
+          const flashcardScript = document.createElement('script');
+          flashcardScript.src = 'flashcard.js';
+          const quizScript = document.createElement('script');
+          quizScript.src = 'quiz.js';
+          const weakWordsScript = document.createElement('script');
+          weakWordsScript.src = 'weak-words.js';
+          const pronunciationScript = document.createElement('script');
+          pronunciationScript.src = 'pronunciation.js';
+          const meaningScript = document.createElement('script');
+          meaningScript.src = 'meaning.js';
+          const appScript = document.createElement('script');
+          appScript.src = 'app.js';
+          body.append(databaseScript, sessionScript, flashcardScript, quizScript, weakWordsScript, pronunciationScript, meaningScript, appScript);
+        }
+
+        return '<!DOCTYPE html>\\n' + clone.outerHTML;
+      }
+
+      async function readProjectAsset(path) {
+        const response = await fetch(path, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Không đọc được ' + path);
+        return response.text();
       }
 
       const PLUGIN_SAMPLE_CODE = `/**
@@ -1911,22 +2568,61 @@ import { createMeaning } from './meaning.js';
 `;
 
       if ($('btnExportZip')) {
-        $('btnExportZip').onclick = () => {
-          const cssContent = ($('appCustomStyles')?.textContent || '').trim() + '\n';
-          const jsContent = ($('appCoreScript')?.textContent || '').trim() + '\n';
-          const zipBlob = buildZipBlob([
-            { name: 'index.html', content: buildSeparatedHtml() },
-            { name: 'styles.css', content: cssContent },
-            { name: 'app.js', content: jsContent }
-          ]);
-          downloadBlob('kawaii-jlpt-3-files.zip', zipBlob);
-          showToast('Đã tải gói 3 file HTML, CSS và JavaScript!', 'success');
+        $('btnExportZip').onclick = async () => {
+          try {
+            const [cssContent, jsContent, dbContent, sessionContent, flashcardContent, quizContent, weakWordsContent, pronunciationContent, meaningContent] = await Promise.all([
+              readProjectAsset('styles.css'),
+              readProjectAsset('app.js'),
+              readProjectAsset('database.js'),
+              readProjectAsset('study-session.js'),
+              readProjectAsset('flashcard.js'),
+              readProjectAsset('quiz.js'),
+              readProjectAsset('weak-words.js'),
+              readProjectAsset('pronunciation.js'),
+              readProjectAsset('meaning.js')
+            ]);
+            const zipBlob = buildZipBlob([
+              { name: 'index.html', content: buildSeparatedHtml() },
+              { name: 'styles.css', content: cssContent },
+              { name: 'database.js', content: dbContent },
+              { name: 'study-session.js', content: sessionContent },
+              { name: 'flashcard.js', content: flashcardContent },
+              { name: 'quiz.js', content: quizContent },
+              { name: 'weak-words.js', content: weakWordsContent },
+              { name: 'pronunciation.js', content: pronunciationContent },
+              { name: 'meaning.js', content: meaningContent },
+              { name: 'app.js', content: jsContent },
+              { name: 'plugin-sample.js', content: PLUGIN_SAMPLE_CODE }
+            ]);
+            downloadBlob('kawaii-jlpt.zip', zipBlob);
+            showToast('Đã nén & tải về kawaii-jlpt.zip!', 'success');
+          } catch {
+            showToast('Không thể đóng gói. Hãy mở ứng dụng qua máy chủ web.', 'error');
+          }
         };
       }
-      if ($('btnExportHtml')) $('btnExportHtml').onclick = () => { downloadBlob('index.html', new Blob([buildSeparatedHtml()], { type: 'text/html;charset=utf-8' })); showToast('Đã tải index.html!', 'success'); };
-      if ($('btnExportCss')) $('btnExportCss').onclick = () => { downloadBlob('styles.css', new Blob([($('appCustomStyles')?.textContent || '').trim() + '\n'], { type: 'text/css;charset=utf-8' })); showToast('Đã tải styles.css!', 'success'); };
-      if ($('btnExportJs')) $('btnExportJs').onclick = () => { downloadBlob('app.js', new Blob([($('appCoreScript')?.textContent || '').trim() + '\n'], { type: 'application/javascript;charset=utf-8' })); showToast('Đã tải app.js!', 'success'); };
-      if ($('btnExportPluginSample')) $('btnExportPluginSample').onclick = () => { downloadBlob('plugin-sample.js', new Blob([PLUGIN_SAMPLE_CODE], { type: 'application/javascript;charset=utf-8' })); showToast('Đã tải plugin-sample.js!', 'success'); };
+      if ($('btnExportHtml')) $('btnExportHtml').onclick = () => {
+        downloadBlob('index.html', new Blob([buildSeparatedHtml()], { type: 'text/html;charset=utf-8' }));
+        showToast('Đã tải index.html!', 'success');
+      };
+      if ($('btnExportCss')) $('btnExportCss').onclick = async () => {
+        try {
+          const content = await readProjectAsset('styles.css');
+          downloadBlob('styles.css', new Blob([content], { type: 'text/css;charset=utf-8' }));
+          showToast('Đã tải styles.css!', 'success');
+        } catch { showToast('Không đọc được styles.css.', 'error'); }
+      };
+      if ($('btnExportJs')) $('btnExportJs').onclick = async () => {
+        try {
+          const content = await readProjectAsset('app.js');
+          downloadBlob('app.js', new Blob([content], { type: 'application/javascript;charset=utf-8' }));
+          showToast('Đã tải app.js!', 'success');
+        } catch { showToast('Không đọc được app.js.', 'error'); }
+      };
+      if ($('btnExportPluginSample')) $('btnExportPluginSample').onclick = () => {
+        downloadBlob('plugin-sample.js', new Blob([PLUGIN_SAMPLE_CODE], { type: 'application/javascript;charset=utf-8' }));
+        showToast('Đã tải plugin-sample.js!', 'success');
+      };
 
       // =======================================================================
       // 15. BOOTSTRAP (Tự nạp dữ liệu đã lưu + Tự đồng bộ ngầm Google Sheets)
@@ -1934,6 +2630,9 @@ import { createMeaning } from './meaning.js';
       async function bootstrap() {
         loadProgress();
         loadPrefs();
+        state.prefs.sessionSize = 10;
+        $('sessionSizeSelect').value = '10';
+        $('sessionSizeSelect').disabled = true;
 
         const savedSheetUrl = safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL);
         if (savedSheetUrl) $('sheetUrlInput').value = savedSheetUrl;
@@ -1958,8 +2657,17 @@ import { createMeaning } from './meaning.js';
         }
 
         initZenTtsFromCacheOrNetwork(false);
+        events.emit('app:ready', {
+          version: window.KawaiiApp?.version || '3.1.0',
+          wordCount: state.words.length,
+          datasetTitle: state.datasetTitle
+        });
       }
 
-      window.addEventListener('pagehide', () => { pronunciation.destroy(); });
-      bootstrap();
+      window.addEventListener('pagehide', () => { stopAudio(); clearWavCache(); });
+      Core.Bootstrap.start().catch((error) => {
+        console.error('[Kawaii JLPT Bootstrap]', error);
+        events.emit('app:error', { code: 'BOOTSTRAP_FAILED', error });
+        showToast('Không thể khởi tạo ứng dụng: ' + (error?.message || 'Lỗi không xác định'), 'error');
+      });
     })();
