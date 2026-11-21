@@ -1281,20 +1281,13 @@
 
       function moveCard(direction) {
         if (!state.fcDeck.length || cardMoveTimer !== null) return;
+        const nextIndex = Math.max(0, Math.min(state.fcDeck.length - 1, state.fcIndex + direction));
+        if (nextIndex === state.fcIndex) return;
         stopAudio();
         hideTranslateSheet();
-        const card = $('fcPerspective');
-        card.style.transition = 'transform 0.14s ease-out, opacity 0.14s ease-out';
-        card.style.transform = `translateX(${-42 * direction}px)`;
-        card.style.opacity = '0.35';
-        cardMoveTimer = setTimeout(() => {
-          cardMoveTimer = null;
-          state.fcIndex = Math.max(0, Math.min(state.fcDeck.length - 1, state.fcIndex + direction));
-          state.fcFlipped = false;
-          renderFlashcard();
-          card.style.transform = '';
-          card.style.opacity = '';
-        }, 140);
+        state.fcIndex = nextIndex;
+        state.fcFlipped = false;
+        renderFlashcard();
       }
 
       function startNewStudySession() {
@@ -1964,7 +1957,7 @@
         });
 
         return Object.freeze({
-          version: '3.7.0-core',
+          version: '3.7.1-core',
           State,
           Events: events,
           Modules,
@@ -1982,7 +1975,7 @@
       })();
 
       window.KawaiiApp = {
-        version: '3.7.0',
+        version: '3.7.1',
         Core,
         studySession,
         flashcards,
@@ -2297,7 +2290,12 @@
         });
       }
 
-      bindSwipeAndFlip($('fcPerspective'), flipFlashcard, () => handleFlashcardRating('good'), () => handleFlashcardRating('again'), () => !state.fcDeck.length || cardMoveTimer !== null);
+      window.KawaiiFlashcardInteraction.attach($('fcPerspective'), {
+        onFlip: flipFlashcard,
+        onAgain: () => handleFlashcardRating('again'),
+        onGood: () => handleFlashcardRating('good'),
+        isBusy: () => !state.fcDeck.length || cardMoveTimer !== null
+      });
       bindSwipeAndFlip($('kanaPerspective'), flipKanaCard, () => moveKanaCard(-1), () => moveKanaCard(1), () => !state.kanaDeck.length || kanaMoveTimer !== null);
 
       $('fcSpeakFrontBtn').onclick = (e) => { e.stopPropagation(); speakWord(state.fcDeck[state.fcIndex]); };
