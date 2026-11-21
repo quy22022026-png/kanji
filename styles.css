@@ -99,3 +99,59 @@ body {
 
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+
+/* iOS Safari viewport and safe-area support */
+html {
+  min-height: 100%;
+  min-height: 100svh;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100svh;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@supports (height: 100dvh) {
+  body { min-height: 100dvh; }
+}
+
+@supports (-webkit-touch-callout: none) {
+  .overflow-y-auto,
+  .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  button,
+  [role="button"] {
+    -webkit-touch-callout: none;
+  }
+}
+
+
+/* Phase 8 — minimal swipe-first Flashcard */
+.nav-icon { display:inline-flex; width:18px; height:18px; align-items:center; justify-content:center; flex:none; }
+.nav-icon svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.sound-icon { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.fc-nav-arrow {
+  width:48px; height:44px; display:flex; align-items:center; justify-content:center;
+  border:1px solid #E9E1DC; border-radius:16px; background:#fff; color:#665A55;
+  transition:background .16s ease, transform .16s ease, opacity .16s ease;
+  -webkit-tap-highlight-color:transparent;
+}
+.fc-nav-arrow svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+.fc-nav-arrow:active:not(:disabled) { transform:scale(.94); background:#FAF4F0; }
+.fc-nav-arrow:disabled { opacity:.35; }
+#fcPerspective { position:relative; overflow:visible; touch-action:pan-y; }
+.fc-swipe-feedback {
+  position:absolute; z-index:5; top:22px; padding:9px 13px; border-radius:13px;
+  font-size:11px; font-weight:900; letter-spacing:.08em; opacity:0;
+  pointer-events:none; transition:opacity .08s linear;
+}
+.fc-swipe-again { left:18px; color:#C94F6B; border:1px solid #F5B8C5; background:rgba(255,239,242,.96); transform:rotate(-5deg); }
+.fc-swipe-good { right:18px; color:#16845A; border:1px solid #A7E3C5; background:rgba(235,250,242,.97); transform:rotate(5deg); }
+#fcPerspective.swiping-again .fc-swipe-again,
+#fcPerspective.swiping-good .fc-swipe-good { opacity:1; }
