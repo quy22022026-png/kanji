@@ -19,7 +19,7 @@
       removeItem: (key) => memoryFallback.delete(key)
     };
     const storageKey = options.storageKey || 'kawaii_jlpt_active_session_v1';
-    const defaultLimit = 10;
+    const defaultLimit = 1000;
     let active = null;
 
     function persist() {
