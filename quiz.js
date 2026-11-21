@@ -44,6 +44,11 @@
       storage.setItem(STORAGE_KEY, JSON.stringify(data));
     }
 
+    function reload() {
+      data = loadData();
+      return getHistory();
+    }
+
     function shuffle(items) {
       const result = [...items];
       for (let i = result.length - 1; i > 0; i--) {
@@ -230,6 +235,7 @@
     return Object.freeze({
       start, currentQuestion, answer, next, snapshot, getStats,
       getHistory: () => [...data.attempts],
+      reload,
       getLastTestedAt: wordId => Number(data.lastTestedAt[wordId]) || 0,
       getWrongCount: wordId => Number(data.wrongCounts[wordId]) || 0
     });
