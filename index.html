@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Kawaii JLPT — Lật Thẻ, SRS &amp; Google Sheets</title>
 
   <!-- Fonts -->
@@ -56,16 +56,16 @@
         <div class="flex items-center gap-1.5 shrink-0">
           <nav id="modeNav" class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl gap-1 shrink-0" aria-label="Chế độ">
             <button id="navFlashcard" type="button" aria-label="Lật thẻ" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="flashcard">
-              <span>🃏</span><span class="hidden md:inline">Lật thẻ</span>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></span><span class="hidden md:inline">Lật thẻ</span>
             </button>
             <button id="navMatching" type="button" aria-label="Nối từ" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="matching">
-              <span>🧩</span><span class="hidden md:inline">Nối từ</span>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 4h3a2 2 0 1 1 4 0h3v5a2 2 0 1 1 0 4v7h-5a2 2 0 1 0-4 0H5v-6a2 2 0 1 1 0-4V4z"/></svg></span><span class="hidden md:inline">Nối từ</span>
             </button>
             <button id="navKana" type="button" aria-label="Bảng chữ cái" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="kana">
               <span class="font-jp font-extrabold text-xs sm:text-sm">あア</span><span class="hidden md:inline">Bảng chữ</span>
             </button>
             <button id="navData" type="button" aria-label="Mô-đun và dữ liệu" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="data">
-              <span>📦</span><span class="hidden md:inline">Mô-đun</span>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4v10l-8 4-8-4V7l8-4z"/><path d="m4 7 8 4 8-4M12 11v10"/></svg></span><span class="hidden md:inline">Mô-đun</span>
             </button>
           </nav>
 
@@ -165,6 +165,8 @@
 
         <!-- 3D Card -->
         <div id="fcPerspective" tabindex="0" role="button" aria-label="Lật thẻ từ vựng" style="touch-action: pan-y;" class="perspective-1000 w-full h-[355px] sm:h-[395px] cursor-pointer select-none">
+          <div class="fc-swipe-feedback fc-swipe-again" aria-hidden="true">CẦN ÔN LẠI</div>
+          <div class="fc-swipe-feedback fc-swipe-good" aria-hidden="true">ĐÃ THUỘC</div>
           <div id="fcInner" class="flashcard-inner">
             <!-- FRONT FACE -->
             <div class="flashcard-face bg-white border border-[#F1ECE6] rounded-[28px] shadow-card p-5 sm:p-7 flex flex-col justify-between">
@@ -175,7 +177,7 @@
                   <span id="fcTopicBadge" class="hidden sm:inline-block px-2.5 py-1 rounded-xl text-xs font-bold bg-[#F6EFE8] text-[#6E625E] truncate max-w-[140px]">Chủ đề</span>
                 </div>
                 <button id="fcSpeakFrontBtn" type="button" class="w-9 h-9 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90 shrink-0" title="Nghe phát âm (R)">
-                  🔊
+                  <svg viewBox="0 0 24 24" class="sound-icon" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"/></svg>
                 </button>
               </div>
 
@@ -202,7 +204,7 @@
                   <span id="fcPosBadge" class="hidden px-2 py-0.5 rounded-lg bg-[#F6EFE8] text-[#786D69] text-[10px] font-extrabold shrink-0"></span>
                 </div>
                 <button id="fcSpeakBackBtn" type="button" class="w-9 h-9 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90 shrink-0" title="Nghe lại phát âm">
-                  🔊
+                  <svg viewBox="0 0 24 24" class="sound-icon" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"/></svg>
                 </button>
               </div>
 
@@ -231,35 +233,27 @@
               </div>
 
               <div class="text-center text-[11px] font-bold text-[#A89B96]">
-                Đánh giá bên dưới để app hẹn lịch nhắc ôn từ này 👇
+                Vuốt trái: Cần ôn lại · Vuốt phải: Đã thuộc
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- SRS 3-Level Rating Bar + Prev/Next -->
-      <div class="w-full max-w-xl flex items-center justify-between gap-1.5 sm:gap-2.5 pt-1">
-        <button id="fcPrevBtn" type="button" aria-label="Thẻ trước" class="px-3 sm:px-3.5 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition shrink-0">←</button>
-
-        <button id="fcRateAgainBtn" type="button" class="flex-1 py-2.5 px-2 rounded-2xl bg-[#FFF1F2] border border-[#FECDD3] text-[#E11D48] font-extrabold text-xs sm:text-sm hover:bg-[#FFE4E6] active:scale-[0.98] transition flex flex-col items-center leading-tight">
-          <span>🔴 Quên</span>
-          <span class="text-[10px] font-bold opacity-80">Học lại ngay</span>
+      <!-- Minimal navigation: arrows never change SRS; only swipe rates a card -->
+      <div class="w-full max-w-xl flex items-center justify-between gap-4 pt-1">
+        <button id="fcPrevBtn" type="button" aria-label="Từ trước" title="Từ trước" class="fc-nav-arrow" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
         </button>
-
-        <button id="fcRateHardBtn" type="button" class="flex-1 py-2.5 px-2 rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] text-[#D97706] font-extrabold text-xs sm:text-sm hover:bg-[#FEF3C7] active:scale-[0.98] transition flex flex-col items-center leading-tight">
-          <span>🟡 Hơi nhớ</span>
-          <span class="text-[10px] font-bold opacity-80">Ôn 1 ngày</span>
+        <p class="flex-1 text-center text-[11px] font-semibold text-[#9A8C86]">
+          Vuốt trái <span class="text-[#D96B83]">· Ôn lại</span>
+          <span class="mx-1.5 text-[#D8CEC8]">|</span>
+          Vuốt phải <span class="text-[#26966B]">· Đã thuộc</span>
+        </p>
+        <button id="fcNextBtn" type="button" aria-label="Từ tiếp theo" title="Từ tiếp theo" class="fc-nav-arrow" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
         </button>
-
-        <button id="fcRateGoodBtn" type="button" class="flex-1 py-2.5 px-2 rounded-2xl bg-matcha-50 border border-[#A7F3D0] text-matcha-600 font-extrabold text-xs sm:text-sm hover:bg-matcha-100 active:scale-[0.98] transition flex flex-col items-center leading-tight">
-          <span>🟢 Nhớ kỹ</span>
-          <span id="fcGoodIntervalHint" class="text-[10px] font-bold opacity-80">Ôn 1 ngày</span>
-        </button>
-
-        <button id="fcNextBtn" type="button" aria-label="Thẻ tiếp theo" class="px-3 sm:px-3.5 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition shrink-0">→</button>
       </div>
-      <p class="w-full text-center text-[10px] font-bold text-[#8C7F7A]">Vuốt trái: Quên – ôn lại · Vuốt phải: Nhớ kỹ – hoàn thành từ</p>
     </section>
 
     <!-- VIEW 2: PAIR MATCHING (NỐI TỪ 2 NGÔN NGỮ) -->
