@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kawaii JLPT — Lật Thẻ, SRS &amp; Google Sheets</title>
 
   <!-- Fonts -->
@@ -151,6 +151,9 @@
             </div>
           </div>
           <div class="mt-5 flex items-center justify-center gap-2 flex-wrap">
+            <button id="btnStartQuizAfterSession" type="button" class="px-5 py-2.5 rounded-2xl bg-[#5B8DEF] text-white font-extrabold text-xs sm:text-sm shadow-sm hover:opacity-95 active:scale-95 transition">
+              📝 Làm trắc nghiệm
+            </button>
             <button id="btnStartNextSession" type="button" class="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#FF8FA3] to-[#FB6F92] text-white font-extrabold text-xs sm:text-sm shadow-sm hover:opacity-95 active:scale-95 transition">
               ▶ Học phiên tiếp theo
             </button>
@@ -256,6 +259,7 @@
 
         <button id="fcNextBtn" type="button" aria-label="Thẻ tiếp theo" class="px-3 sm:px-3.5 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition shrink-0">→</button>
       </div>
+      <p class="w-full text-center text-[10px] font-bold text-[#8C7F7A]">Vuốt trái: Quên – ôn lại · Vuốt phải: Nhớ kỹ – hoàn thành từ</p>
     </section>
 
     <!-- VIEW 2: PAIR MATCHING (NỐI TỪ 2 NGÔN NGỮ) -->
@@ -415,7 +419,7 @@
 
         <div class="flex flex-col gap-2.5 bg-[#FFFDF9] border border-[#F1ECE6] rounded-2xl p-4">
           <label for="sheetUrlInput" class="text-xs font-extrabold text-[#4A4240]">Link Google Sheets (bật chia sẻ "Bất kỳ ai có liên kết đều xem được")</label>
-          <input id="sheetUrlInput" type="url" value="https://docs.google.com/spreadsheets/d/1LI3SUVri2-uYGjB-R3jPdDeotY72_VSNIuKipnPXf10/edit?usp=drivesdk" placeholder="https://docs.google.com/spreadsheets/d/..." class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2.5 text-xs bg-white focus:outline-none focus:border-[#FF8FA3]" />
+          <input id="sheetUrlInput" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2.5 text-xs bg-white focus:outline-none focus:border-[#FF8FA3]" />
 
           <div class="flex items-center justify-between gap-2 flex-wrap pt-1">
             <div class="flex items-center gap-3 text-xs font-bold text-[#4A4240] flex-wrap">
@@ -481,7 +485,7 @@
           <div>
             <h2 class="text-base font-extrabold text-[#332E2E]">🛠️ 3. Tải gói ZIP tách file (HTML · CSS · JS)</h2>
             <p class="text-xs text-[#786D69] mt-0.5">
-              Đóng gói đúng 3 tệp <code>index.html</code>, <code>styles.css</code> và <code>app.js</code> thành một tệp <strong>.zip</strong>.
+              Nén sẵn <code>index.html</code>, <code>styles.css</code>, <code>app.js</code> &amp; <code>plugin-sample.js</code> thành 1 tệp <strong>.zip</strong> để bạn giải nén vào thư mục repo (chung với <code>zen-worker.js</code> và <code>vendor/</code>).
             </p>
           </div>
           <button id="btnExportZip" type="button" class="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#FF8FA3] to-[#FB6F92] text-white text-xs font-extrabold shadow-sm hover:opacity-95 active:scale-[0.98] transition shrink-0">
@@ -642,6 +646,14 @@
   <!-- =========================================================================
        CORE JAVASCRIPT ARCHITECTURE (window.KawaiiApp)
        ========================================================================= -->
-  <script type="module" src="app.js"></script>
+  
+  <script src="database.js"></script>
+  <script src="study-session.js"></script>
+  <script src="flashcard.js"></script>
+  <script src="quiz.js"></script>
+  <script src="weak-words.js"></script>
+  <script src="pronunciation.js"></script>
+  <script src="meaning.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
