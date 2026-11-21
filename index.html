@@ -69,6 +69,7 @@
             </button>
           </nav>
 
+<button id="btnCloudAccount" type="button" aria-label="Tài khoản và đồng bộ" title="Đồng bộ đám mây" class="w-9 h-9 rounded-2xl bg-[#F6EFE8] text-[#4A4240] flex items-center justify-center shrink-0"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 18h11a4 4 0 0 0 .4-8 6.5 6.5 0 0 0-12.6 1.3A3.5 3.5 0 0 0 7 18z"/></svg></button>
           <button id="btnAudioSettings" aria-label="Cài đặt âm thanh" type="button" class="w-9 h-9 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] flex items-center justify-center text-sm transition shrink-0 relative" title="Cài đặt ZEN-TTS Marine">
             🎧
             <span id="zenStatusDot" class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#D1C7BF]"></span>
@@ -637,17 +638,38 @@
     </div>
   </div>
 
+  <div id="cloudAccountModal" role="dialog" aria-modal="true" aria-label="Tài khoản và đồng bộ" class="hidden fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-white rounded-3xl p-5 shadow-xl max-h-[85dvh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-3"><h3 class="font-extrabold text-lg">Tài khoản & đồng bộ</h3><button id="closeCloudAccountBtn" type="button" aria-label="Đóng" class="px-3 py-1 rounded-xl bg-[#F6EFE8]">✕</button></div>
+      <p id="cloudAccountStatus" class="text-sm font-bold">Chưa đăng nhập</p>
+      <p id="cloudAccountDetail" class="text-xs text-[#786D69] mb-4">Đồng bộ tùy chọn với Supabase.</p>
+      <label class="block text-xs font-bold mb-1" for="cloudEmail">Email</label>
+      <input id="cloudEmail" type="email" autocomplete="email" class="w-full border rounded-xl p-3 mb-3" />
+      <label class="block text-xs font-bold mb-1" for="cloudPassword">Mật khẩu</label>
+      <input id="cloudPassword" type="password" autocomplete="current-password" class="w-full border rounded-xl p-3 mb-3" />
+      <div class="grid grid-cols-2 gap-2">
+        <button id="cloudSignInBtn" type="button" class="p-2 rounded-xl bg-[#FB6F92] text-white font-bold">Đăng nhập</button>
+        <button id="cloudSignUpBtn" type="button" class="p-2 rounded-xl bg-[#F6EFE8] font-bold">Đăng ký</button>
+        <button id="cloudSyncNowBtn" type="button" class="p-2 rounded-xl bg-[#EAF9F1] font-bold">Đồng bộ ngay</button>
+        <button id="cloudSignOutBtn" type="button" class="p-2 rounded-xl bg-[#F6EFE8] font-bold">Đăng xuất</button>
+      </div>
+    </div>
+  </div>
   <!-- =========================================================================
        CORE JAVASCRIPT ARCHITECTURE (window.KawaiiApp)
        ========================================================================= -->
   
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="database.js"></script>
+  <script src="supabase-config.js"></script>
+  <script src="cloud-sync.js"></script>
   <script src="study-session.js"></script>
   <script src="flashcard.js"></script>
   <script src="quiz.js"></script>
   <script src="weak-words.js"></script>
   <script src="pronunciation.js"></script>
   <script src="meaning.js"></script>
+  <script src="flashcard-interaction.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
