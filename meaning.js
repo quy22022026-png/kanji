@@ -1,87 +1,155 @@
-/* Kawaii JLPT - Meaning / tap-to-lookup module.
- * This module owns dictionary indexing and the translation popup only.
- * Audio is deliberately not triggered when the popup opens.
+/**
+ * Kawaii JLPT - Meaning / Tap-to-lookup Module
+ * Owns Japanese tokenization, tappable word elements and meaning-sheet rendering.
  */
-export function createMeaning({ state, $, document, builtinDictionary = {} }) {
+(() => {
+  'use strict';
 
-  function buildIndex() {
-    const idx = new Map();
-    Object.entries(builtinDictionary).forEach(([key, value]) => idx.set(key, { text: key, ...value }));
-    state.words.forEach(word => {
-      const entry = {
-        text: word.kanji || word.kana,
-        reading: word.kana,
-        hanViet: word.hanViet || '',
-        meaning: word.meaning,
-        level: word.level,
-        note: [word.pos, word.topic].filter(Boolean).join(' · ')
-      };
-      if (word.kanji) idx.set(word.kanji, entry);
-      if (word.kana && !idx.has(word.kana)) idx.set(word.kana, entry);
-
-      if (word.furigana && word.furigana.includes('[')) {
-        const parts = [...word.furigana.matchAll(/(\p{Script=Han}+)\[([^\]]+)\]/gu)];
-        const hanVietParts = word.hanViet ? word.hanViet.split(/\s+/) : [];
-        parts.forEach((match, index) => {
-          const kanjiChar = match[1], reading = match[2];
-          if (kanjiChar.length === 1 && !idx.has(kanjiChar)) {
-            idx.set(kanjiChar, {
-              text: kanjiChar,
-              reading,
-              hanViet: hanVietParts[index] || word.hanViet || '',
-              meaning: `Trong từ "${word.kanji}" (${word.meaning})`,
-              level: word.level,
-              note: `Cách đọc trong ${word.kanji}: ${reading}`
-            });
-          }
-        });
-      }
-    });
-    state.dictIndex = idx;
-    return idx;
-  }
-
-  function lookup(token, parentWord = null) {
-    const key = String(token || '');
-    if (state.dictIndex.has(key)) return state.dictIndex.get(key);
-    if (parentWord && (parentWord.kanji || '').includes(key)) {
-      return {
-        text: key,
-        reading: parentWord.kana,
-        hanViet: parentWord.hanViet || '',
-        meaning: parentWord.meaning,
-        level: parentWord.level,
-        note: `Thuộc từ: ${parentWord.kanji} (${parentWord.kana})`
-      };
-    }
-    return {
-      text: key,
-      reading: key,
-      hanViet: '',
+  function create(options = {}) {
+    const getDictionaryIndex = options.getDictionaryIndex || (() => new Map());
+    const lookup = options.lookup || ((token) => ({
+      text: token, reading: token, hanViet: '',
       meaning: 'Chưa có trong từ điển hiện tại',
       note: 'Ấn nút 🔊 để nghe cách phát âm'
-    };
+    }));
+    const onSpeak = options.onSpeak || (() => {});
+    const getElements = options.getElements || (() => ({}));
+    let activeSpeakText = '';
+
+    function tokenize(sentence) {
+      const source = String(sentence || '');
+      const dictionary = getDictionaryIndex() || new Map();
+      const tokens = [];
+      let index = 0;
+
+      while (index < source.length) {
+        const char = source[index];
+        if (/^[。、！？「」『』（）\s.,!?]+$/u.test(char)) {
+          tokens.push({ text: char, punct: true });
+          index += 1;
+          continue;
+        }
+
+        let matched = '';
+        const maxLength = Math.min(8, source.length - index);
+        for (let length = maxLength; length >= 1; length -= 1) {
+          const candidate = source.slice(index, index + length);
+          if (dictionary.has(candidate)) {
+            matched = candidate;
+            break;
+          }
+        }
+
+        if (matched) {
+          tokens.push({ text: matched, punct: false, known: true });
+          index += matched.length;
+        } else if (/^[\u30A0-\u30FFー]$/u.test(char)) {
+          let end = index + 1;
+          while (end < source.length && /^[\u30A0-\u30FFー]$/u.test(source[end])) end += 1;
+          tokens.push({ text: source.slice(index, end), punct: false, known: false });
+          index = end;
+        } else {
+          tokens.push({ text: char, punct: false, known: false });
+          index += 1;
+        }
+      }
+      return tokens;
+    }
+
+    function clearActiveTokens() {
+      if (typeof document === 'undefined') return;
+      document.querySelectorAll('.tap-token.is-active').forEach(element => {
+        element.classList.remove('is-active');
+      });
+    }
+
+    function createTapToken(text, lookupKey, parentWord = null, optionsForToken = {}) {
+      const span = document.createElement('span');
+      span.textContent = String(text || '');
+      span.className = optionsForToken.underline
+        ? 'tap-token mx-[1px]'
+        : 'tap-token border-transparent hover:border-[#FF8FA3]';
+      span.addEventListener('click', event => {
+        event.stopPropagation();
+        clearActiveTokens();
+        span.classList.add('is-active');
+        showPopup(lookupKey || text, parentWord);
+      });
+      return span;
+    }
+
+    function createRubyToken(baseText, readingText, parentWord = null) {
+      const ruby = document.createElement('ruby');
+      ruby.className = 'tap-token mx-[1px]';
+      ruby.textContent = String(baseText || '');
+      const rt = document.createElement('rt');
+      rt.textContent = String(readingText || '');
+      ruby.appendChild(rt);
+      ruby.addEventListener('click', event => {
+        event.stopPropagation();
+        clearActiveTokens();
+        ruby.classList.add('is-active');
+        showPopup(baseText, parentWord);
+      });
+      return ruby;
+    }
+
+    function renderSentence(container, sentence, parentWord = null) {
+      if (!container) return;
+      container.replaceChildren();
+      tokenize(sentence).forEach(token => {
+        if (token.punct) {
+          container.appendChild(document.createTextNode(token.text));
+        } else {
+          container.appendChild(createTapToken(token.text, token.text, parentWord, {
+            underline: token.known
+          }));
+        }
+      });
+    }
+
+    function showPopup(token, parentWord = null) {
+      const elements = getElements() || {};
+      const info = lookup(token, parentWord) || {};
+      if (elements.charBox) elements.charBox.textContent = info.text || token;
+      if (elements.reading) elements.reading.textContent = info.reading || '';
+      if (elements.hanViet) {
+        elements.hanViet.textContent = info.hanViet || '';
+        elements.hanViet.classList.toggle('hidden', !info.hanViet);
+      }
+      if (elements.level) {
+        elements.level.textContent = info.level || '';
+        elements.level.classList.toggle('hidden', !info.level);
+      }
+      if (elements.meaning) elements.meaning.textContent = info.meaning || '';
+      if (elements.note) elements.note.textContent = info.note || '';
+      activeSpeakText = info.reading || info.text || token;
+      if (elements.sheet) elements.sheet.classList.remove('hidden');
+      onSpeak(activeSpeakText);
+      return info;
+    }
+
+    function hidePopup() {
+      const elements = getElements() || {};
+      if (elements.sheet) elements.sheet.classList.add('hidden');
+      clearActiveTokens();
+    }
+
+    function getSpeakText() {
+      return activeSpeakText;
+    }
+
+    return Object.freeze({
+      tokenize,
+      createTapToken,
+      createRubyToken,
+      renderSentence,
+      showPopup,
+      hidePopup,
+      clearActiveTokens,
+      getSpeakText
+    });
   }
 
-  function showPopup(token, parentWord = null) {
-    const info = lookup(token, parentWord);
-    $('trCharBox').textContent = info.text;
-    $('trReading').textContent = info.reading || '';
-    $('trHanViet').textContent = info.hanViet || '';
-    $('trHanViet').classList.toggle('hidden', !info.hanViet);
-    $('trLevel').textContent = info.level || '';
-    $('trLevel').classList.toggle('hidden', !info.level);
-    $('trMeaning').textContent = info.meaning || '';
-    $('trNote').textContent = info.note || '';
-    state.activePopupSpeakText = info.reading || info.text;
-    $('translateSheet').classList.remove('hidden');
-    return info;
-  }
-
-  function hidePopup() {
-    $('translateSheet').classList.add('hidden');
-    document.querySelectorAll('.tap-token.is-active').forEach(el => el.classList.remove('is-active'));
-  }
-
-  return { buildIndex, lookup, showPopup, hidePopup };
-}
+  window.KawaiiMeaningModule = Object.freeze({ create });
+})();
