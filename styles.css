@@ -99,9 +99,3 @@ body {
 
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-
-/* iOS Safari safe-area and touch refinements */
-:root { --kawaii-safe-top: env(safe-area-inset-top, 0px); --kawaii-safe-bottom: env(safe-area-inset-bottom, 0px); }
-body { padding-bottom: var(--kawaii-safe-bottom); -webkit-text-size-adjust: 100%; }
-button, [role="button"], input, select, textarea { touch-action: manipulation; }
-button { -webkit-tap-highlight-color: transparent; }
