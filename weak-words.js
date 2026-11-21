@@ -35,6 +35,11 @@
       storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, words: records }));
     }
 
+    function reload() {
+      records = load();
+      return getAll();
+    }
+
     function ensure(wordId) {
       if (!records[wordId]) {
         records[wordId] = {
@@ -138,7 +143,7 @@
       return JSON.parse(JSON.stringify(value));
     }
 
-    return Object.freeze({ recordError, recordCorrect, dismiss, get, getAll, getWeak, getSummary, getErrorCount });
+    return Object.freeze({ recordError, recordCorrect, dismiss, get, getAll, getWeak, getSummary, getErrorCount, reload });
   }
 
   window.KawaiiWeakWordsModule = Object.freeze({ create });
