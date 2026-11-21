@@ -155,3 +155,10 @@ body {
 .fc-swipe-good { right:18px; color:#16845A; border:1px solid #A7E3C5; background:rgba(235,250,242,.97); transform:rotate(5deg); }
 #fcPerspective.swiping-again .fc-swipe-again,
 #fcPerspective.swiping-good .fc-swipe-good { opacity:1; }
+
+/* Phase 8.1 Safari gesture and flip stability */
+#fcPerspective { max-width:100%; contain:layout; -webkit-user-select:none; user-select:none; }
+#fcInner { transition:transform .36s cubic-bezier(.2,.7,.25,1); }
+#fcInner .flashcard-face { -webkit-backface-visibility:hidden; backface-visibility:hidden; }
+#fcPerspective.swiping-again, #fcPerspective.swiping-good { will-change:transform; }
+@media (prefers-reduced-motion:reduce) { #fcInner { transition-duration:.01ms; } }
