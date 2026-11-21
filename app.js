@@ -1045,8 +1045,9 @@
             state.fcDeck = [];
           } else {
             const dueList = pool.filter(w => isWordDue(w.id, now));
-            const newList = pool.filter(w => isWordNew(w.id));
-            state.fcDeck = flashcards.start(shuffle ? shuffled([...dueList, ...newList]) : [...dueList, ...newList], { limit: getSessionWordLimit(pool.length) });
+            const earlyList = pool.filter(w => !isWordNew(w.id) && !isWordDue(w.id, now)).sort((a, b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt);
+            const candidates = [...dueList.sort((a,b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt), ...earlyList];
+            state.fcDeck = flashcards.start(candidates, { limit: getSessionWordLimit(candidates.length), earlyWordIds: earlyList.map(w => w.id) });
           }
           state.fcIndex = 0;
           state.fcFlipped = false;
@@ -1196,9 +1197,9 @@
           } else {
             $('fcEmptyIcon').textContent = '✨';
             $('fcEmptyTitle').textContent = state.prefs.fcFilter === 'DUE' ? 'Chưa có từ nào đến hạn ôn!' : 'Không có từ nào trong mục này!';
-            $('fcEmptyDesc').textContent = 'Bạn có thể chuyển sang "🎯 Phiên học" để học từ mới hoặc bấm "Xem tất cả từ".';
+            $('fcEmptyDesc').textContent = 'Hãy học từ mới trong mục Học theo chủ đề trước khi ôn SMART.';
           }
-          $('btnStartNextSession').classList.toggle('hidden', dueTotal + newTotal === 0);
+          $('btnStartNextSession').classList.toggle('hidden', !pool.some(w => !isWordNew(w.id)));
           return;
         }
 
@@ -1302,14 +1303,15 @@
           renderFlashcard();
           return;
         }
-        studySession.clear();
+        if (studySession.getSnapshot()?.status === 'active' && !window.confirm('Thay phiên SMART đang học dở? Kết quả SRS đã lưu sẽ được giữ nguyên.')) return;
         state.prefs.fcFilter = 'SMART';
         savePrefs();
         const now = Date.now();
         const pool = getBasePool();
         const dueList = pool.filter(w => isWordDue(w.id, now));
-        const newList = pool.filter(w => isWordNew(w.id));
-        state.fcDeck = flashcards.start([...dueList, ...newList], { limit: getSessionWordLimit(pool.length) });
+        const earlyList = pool.filter(w => !isWordNew(w.id) && !isWordDue(w.id, now)).sort((a,b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt);
+        const candidates = [...dueList.sort((a,b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt), ...earlyList];
+        state.fcDeck = flashcards.start(candidates, { limit: getSessionWordLimit(candidates.length), earlyWordIds: earlyList.map(w => w.id) });
         state.fcIndex = 0;
         state.fcFlipped = false;
         const snapshot = studySession.getSnapshot();
@@ -1319,7 +1321,7 @@
         renderHeader();
         renderFlashcard();
         if (!state.fcDeck.length) {
-          showToast('Hiện không có từ mới hoặc từ đến hạn để bắt đầu phiên.', 'info');
+          showToast('Chưa có từ đã học để ôn. Hãy bắt đầu với Học theo chủ đề.', 'info');
         }
       }
 
@@ -1690,7 +1692,7 @@
         ? window.KawaiiFlashcardModule.create({
             session: studySession,
             getWord: (wordId) => state.wordMap.get(wordId) || null,
-            srs: { rateWord: rateWordSrs }
+            srs: { rateWord: rateWordSrs, getWordStat }
           })
         : null;
 
@@ -2191,6 +2193,75 @@
           });
         });
       }
+
+      // Topic learning: independent local queue; one shared SRS record per word.
+      const topicLessons = window.KawaiiTopicLessonsModule?.create();
+      if (topicLessons) registerModule({
+        id: 'topic-lessons', label: 'Học theo chủ đề', icon: '📚',
+        mount: section => { section.innerHTML = ''; },
+        render: section => {
+          const allLessons = topicLessons.partition(state.words);
+          const activeId = topicLessons.snapshot().active?.lessonId;
+          const lessons = allLessons.filter(l => l.level === state.prefs.level || l.id === activeId);
+          const progress = topicLessons.snapshot();
+          const active = progress.active;
+          section.innerHTML = '';
+          const title = document.createElement('h2'); title.className = 'text-xl font-extrabold mb-3';
+          title.textContent = '📚 Học theo chủ đề · ' + state.prefs.level; section.appendChild(title);
+          if (active) {
+            const lesson = lessons.find(l => l.id === active.lessonId);
+            const box = document.createElement('div'); box.className = 'rounded-3xl bg-white border border-[#F1ECE6] p-5 mb-4 shadow-soft';
+            if (!active.queue.length) { topicLessons.clearActive(); renderAll(); return; }
+            const word = state.wordMap.get(active.queue[0]);
+            const heading = document.createElement('p'); heading.className = 'text-xs text-[#786D69] mb-3';
+            heading.textContent = `${active.lessonId} · ${active.initialWordIds.length - new Set(active.queue).size}/${active.initialWordIds.length} từ đã hoàn thành`;
+            box.appendChild(heading);
+            if (word) {
+              const front = document.createElement('p'); front.className = 'font-jp text-3xl font-bold text-center py-6';
+              front.textContent = word.kanji || word.kana; box.appendChild(front);
+              const reveal = document.createElement('button'); reveal.className = 'block mx-auto rounded-xl bg-[#F6EFE8] px-5 py-2 font-bold';
+              reveal.textContent = 'Lật thẻ xem nghĩa'; box.appendChild(reveal);
+              const back = document.createElement('div'); back.className = 'hidden text-center my-4';
+              const kana = document.createElement('p'); kana.textContent = word.kana || ''; kana.className = 'font-jp text-lg';
+              const meaning = document.createElement('p'); meaning.textContent = word.meaning || ''; meaning.className = 'font-bold mt-2';
+              back.append(kana, meaning); box.appendChild(back);
+              const actions = document.createElement('div'); actions.className = 'hidden flex justify-center gap-3 mt-4';
+              for (const [rating, label] of [['again','↻ Again'],['good','✓ Good']]) {
+                const button = document.createElement('button'); button.type = 'button'; button.className = 'rounded-xl px-6 py-3 font-extrabold ' + (rating === 'good' ? 'bg-[#D8F4E6]' : 'bg-[#FFE2E4]');
+                button.textContent = label;
+                button.onclick = () => { try {
+                  topicLessons.rate(word.id, rating, id => !isWordNew(id), rateWordSrs);
+                  cloudSync?.scheduleSync(getCloudBackupSnapshot()); renderAll();
+                } catch (err) { showToast(err.message, 'error'); } };
+                actions.appendChild(button);
+              }
+              box.appendChild(actions);
+              reveal.onclick = () => { back.classList.remove('hidden'); actions.classList.remove('hidden'); reveal.classList.add('hidden'); };
+            } else {
+              const missing = document.createElement('p'); missing.textContent = 'Từ này đã bị xóa khỏi dữ liệu. Có thể hủy phiên và bắt đầu lại.'; box.appendChild(missing);
+            }
+            const cancel = document.createElement('button'); cancel.className = 'text-xs text-[#786D69] underline mt-4'; cancel.textContent = 'Hủy bài đang dở';
+            cancel.onclick = () => { if (window.confirm('Hủy tiến độ bài đang dở? SRS đã ghi nhận vẫn giữ nguyên.')) { topicLessons.clearActive(); renderAll(); } };
+            box.appendChild(cancel); section.appendChild(box);
+          }
+          const grid = document.createElement('div'); grid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-3';
+          for (const lesson of lessons) {
+            const done = progress.completed[lesson.id];
+            const status = done ? done.fingerprint === lesson.fingerprint ? 'Đã hoàn thành' : 'Cần học lại' : active?.lessonId === lesson.id ? 'Đang học' : 'Chưa học';
+            const btn = document.createElement('button'); btn.type = 'button';
+            btn.className = 'text-left bg-white rounded-2xl p-4 border border-[#F1ECE6] shadow-soft';
+            const heading = document.createElement('p'); heading.className = 'font-extrabold'; heading.textContent = lesson.topic + ' · Bài ' + lesson.number;
+            const info = document.createElement('p'); info.className = 'text-xs text-[#786D69] mt-1'; info.textContent = `${lesson.wordIds.length} từ · ${status}`;
+            btn.append(heading, info);
+            btn.onclick = () => {
+              if (active?.lessonId === lesson.id && active.fingerprint === lesson.fingerprint) return;
+              if (topicLessons.snapshot().active && !window.confirm('Thay thế bài học đang dở? Các kết quả SRS đã lưu vẫn được giữ nguyên.')) return;
+              topicLessons.start(lesson, id => !isWordNew(id)); renderAll();
+            }; grid.appendChild(btn);
+          }
+          section.appendChild(grid);
+        }
+      });
 
       if (quiz) {
         registerModule({
@@ -2712,7 +2783,7 @@
         clone.querySelectorAll('#appCoreScript').forEach(script => script.remove());
         const body = clone.querySelector('body');
         if (body) {
-          body.querySelectorAll('script[src="database.js"], script[src="supabase-config.js"], script[src="cloud-sync.js"], script[src="study-session.js"], script[src="flashcard.js"], script[src="quiz.js"], script[src="weak-words.js"], script[src="pronunciation.js"], script[src="meaning.js"], script[src="app.js"]').forEach(script => script.remove());
+          body.querySelectorAll('script[src="topic-lessons.js"], script[src="database.js"], script[src="supabase-config.js"], script[src="cloud-sync.js"], script[src="study-session.js"], script[src="flashcard.js"], script[src="quiz.js"], script[src="weak-words.js"], script[src="pronunciation.js"], script[src="meaning.js"], script[src="app.js"]').forEach(script => script.remove());
           const databaseScript = document.createElement('script');
           databaseScript.src = 'database.js';
           const configScript = document.createElement('script');
@@ -2723,6 +2794,8 @@
           sessionScript.src = 'study-session.js';
           const flashcardScript = document.createElement('script');
           flashcardScript.src = 'flashcard.js';
+          const topicScript = document.createElement('script');
+          topicScript.src = 'topic-lessons.js';
           const quizScript = document.createElement('script');
           quizScript.src = 'quiz.js';
           const weakWordsScript = document.createElement('script');
@@ -2733,7 +2806,7 @@
           meaningScript.src = 'meaning.js';
           const appScript = document.createElement('script');
           appScript.src = 'app.js';
-          body.append(databaseScript, configScript, cloudScript, sessionScript, flashcardScript, quizScript, weakWordsScript, pronunciationScript, meaningScript, appScript);
+          body.append(databaseScript, configScript, cloudScript, sessionScript, flashcardScript, topicScript, quizScript, weakWordsScript, pronunciationScript, meaningScript, appScript);
         }
 
         return '<!DOCTYPE html>\\n' + clone.outerHTML;
