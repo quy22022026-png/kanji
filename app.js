@@ -84,6 +84,8 @@
       // 2. EVENT BUS & STATE (Bao gồm SRS từng từ + Phiên học)
       // =======================================================================
       const listeners = new Map();
+      let cloudSync = null;
+
       const events = {
         on(event, fn) {
           if (!listeners.has(event)) listeners.set(event, new Set());
@@ -311,12 +313,16 @@
       }
 
       function saveProgress() {
-        safeSetLS(STORAGE_PROGRESS_KEY, {
+        const snapshot = {
           wordStats: state.progress.wordStats,
           streak: state.progress.streak,
           bestStreak: state.progress.bestStreak,
           totalPairsMatched: state.progress.totalPairsMatched
-        });
+        };
+        safeSetLS(STORAGE_PROGRESS_KEY, snapshot);
+        window.KawaiiDatabase?.saveAppState('progress_snapshot', snapshot)
+          .catch(error => console.warn('[KawaiiDatabase] Progress mirror failed:', error));
+        cloudSync?.scheduleSync(getCloudBackupSnapshot());
       }
 
       function loadProgress() {
@@ -341,7 +347,12 @@
         }
       }
 
-      function savePrefs() { safeSetLS(STORAGE_PREFS_KEY, state.prefs); }
+      function savePrefs() {
+        safeSetLS(STORAGE_PREFS_KEY, state.prefs);
+        window.KawaiiDatabase?.saveAppState('preferences_snapshot', state.prefs)
+          .catch(error => console.warn('[KawaiiDatabase] Preferences mirror failed:', error));
+        cloudSync?.scheduleSync(getCloudBackupSnapshot());
+      }
 
       function loadPrefs() {
         const pr = safeGetLS(STORAGE_PREFS_KEY, null);
@@ -1157,15 +1168,15 @@
         const total = state.fcDeck.length;
         const managedSession = state.prefs.fcFilter === 'SMART' &&
           studySession && studySession.getSnapshot()?.status === 'active';
-        ['fcPrevBtn', 'fcNextBtn', 'fcRateAgainBtn', 'fcRateHardBtn', 'fcRateGoodBtn', 'fcShuffleBtn'].forEach(id => { $(id).disabled = !total; });
+        ['fcPrevBtn', 'fcNextBtn', 'fcShuffleBtn'].forEach(id => { $(id).disabled = !total; });
         if (managedSession) {
-          $('fcPrevBtn').disabled = true;
-          $('fcNextBtn').disabled = true;
           const snapshot = studySession.getSnapshot();
-          $('fcCounter').textContent = `${snapshot.completedWordIds.length + 1} / ${snapshot.initialWordIds.length}`;
+          $('fcCounter').textContent = `${state.fcIndex + 1} / ${snapshot.initialWordIds.length}`;
         } else {
           $('fcCounter').textContent = total ? `${state.fcIndex + 1} / ${total}` : '0 / 0';
         }
+        $('fcPrevBtn').disabled = !total || state.fcIndex <= 0;
+        $('fcNextBtn').disabled = !total || state.fcIndex >= total - 1;
 
         if (!total) {
           $('fcPerspective').classList.add('hidden');
@@ -1201,7 +1212,6 @@
         $('fcSrsBadge').textContent = srsInfo.label;
         $('fcSrsBadge').className = `px-2.5 py-1 rounded-xl text-[11px] font-extrabold shrink-0 ${srsInfo.badgeClass}`;
         $('fcTopicBadge').textContent = word.topic || 'Chung';
-        $('fcGoodIntervalHint').textContent = `Ôn ${srsInfo.nextGoodDays} ngày`;
 
         renderCardWordWithRuby($('fcKanji'), word);
         $('fcRomaji').textContent = state.prefs.showFuri && word.romaji ? `/${word.romaji}/` : '';
@@ -1279,7 +1289,7 @@
         card.style.opacity = '0.35';
         cardMoveTimer = setTimeout(() => {
           cardMoveTimer = null;
-          state.fcIndex = (state.fcIndex + direction + state.fcDeck.length) % state.fcDeck.length;
+          state.fcIndex = Math.max(0, Math.min(state.fcDeck.length - 1, state.fcIndex + direction));
           state.fcFlipped = false;
           renderFlashcard();
           card.style.transform = '';
@@ -1342,6 +1352,7 @@
                 session: result.session,
                 stats: { ...result.session.stats }
               });
+              persistCompletedStudySession(result.session);
             }
           } else {
             next = rateWordSrs(word.id, rating);
@@ -1370,6 +1381,7 @@
         if (weakWords) {
           if (rating === 'again') weakWords.recordError(word.id, 'flashcard', reviewSessionId);
           else weakWords.recordCorrect(word.id, 'flashcard', reviewSessionId);
+          cloudSync?.scheduleSync(getCloudBackupSnapshot());
         }
 
         if (rating === 'again') {
@@ -1669,7 +1681,9 @@
       // 12A. FEATURE MODULES (PHASE 3)
       // =======================================================================
       const studySession = window.KawaiiStudySessionModule
-        ? window.KawaiiStudySessionModule.create()
+        ? window.KawaiiStudySessionModule.create({
+            storage: window.KawaiiDatabase?.createMirroredStorage('study-session')
+          })
         : null;
       if (studySession) studySession.load();
 
@@ -1682,23 +1696,112 @@
         : null;
 
       const weakWords = window.KawaiiWeakWordsModule
-        ? window.KawaiiWeakWordsModule.create()
+        ? window.KawaiiWeakWordsModule.create({
+            storage: window.KawaiiDatabase?.createMirroredStorage('weak-words')
+          })
         : null;
 
       const quiz = window.KawaiiQuizModule && weakWords
         ? window.KawaiiQuizModule.create({
+            storage: window.KawaiiDatabase?.createMirroredStorage('quiz'),
             getErrorCount: (wordId) => weakWords.getErrorCount(wordId),
             onWrong: ({ wordId, quizId, attemptNo }) => {
               weakWords.recordError(wordId, 'quiz', quizId, { attemptNo });
+              cloudSync?.scheduleSync(getCloudBackupSnapshot());
               events.emit('quiz:answer-wrong', { wordId, quizId, attemptNo });
             },
             onCorrect: ({ wordId, quizId }) => {
               weakWords.recordCorrect(wordId, 'quiz', quizId);
+              cloudSync?.scheduleSync(getCloudBackupSnapshot());
               events.emit('quiz:answer-correct', { wordId, quizId });
             },
             onComplete: (result) => events.emit('quiz:completed', result)
           })
         : null;
+
+      function getCloudBackupSnapshot() {
+        return {
+          progress: safeGetLS(STORAGE_PROGRESS_KEY, {}),
+          quiz: safeGetLS('kawaii_jlpt_quiz_data_v1', {}),
+          weakWords: safeGetLS('kawaii_jlpt_weak_words_v1', {}),
+          preferences: safeGetLS(STORAGE_PREFS_KEY, {})
+        };
+      }
+
+      async function applyCloudBackupSnapshot(snapshot) {
+        if (!snapshot) return false;
+        safeSetLS(STORAGE_PROGRESS_KEY, snapshot.progress || {});
+        safeSetLS('kawaii_jlpt_quiz_data_v1', snapshot.quiz || {});
+        safeSetLS('kawaii_jlpt_weak_words_v1', snapshot.weakWords || { version: 1, words: {} });
+        safeSetLS(STORAGE_PREFS_KEY, snapshot.preferences || {});
+
+        state.progress.wordStats = { ...(snapshot.progress?.wordStats || {}) };
+        state.progress.streak = Number(snapshot.progress?.streak) || 0;
+        state.progress.bestStreak = Number(snapshot.progress?.bestStreak) || 0;
+        state.progress.totalPairsMatched = Number(snapshot.progress?.totalPairsMatched) || 0;
+        quiz?.reload();
+        weakWords?.reload();
+        loadPrefs();
+        await window.KawaiiDatabase?.saveAppState('progress_snapshot', snapshot.progress || {});
+        await window.KawaiiDatabase?.saveAppState('preferences_snapshot', snapshot.preferences || {});
+        events.emit('cloud:backup-restored', { exportedAt: snapshot.exportedAt || null });
+        if (state.words.length) {
+          rebuildFlashcardDeck();
+          renderAll();
+        }
+        return true;
+      }
+
+      cloudSync = window.KawaiiCloudSyncModule
+        ? window.KawaiiCloudSyncModule.create({
+            config: window.KawaiiSupabaseConfig,
+            database: window.KawaiiDatabase,
+            getBackupSnapshot: getCloudBackupSnapshot,
+            applyBackupSnapshot: applyCloudBackupSnapshot,
+            onStatus: (status) => {
+              events.emit('cloud:status', status);
+              const statusEl = $('cloudAccountStatus');
+              const detailEl = $('cloudAccountDetail');
+              if (statusEl) {
+                const labels = {
+                  'not-configured': 'Chưa cấu hình Supabase',
+                  'sdk-missing': 'Không tải được Supabase SDK',
+                  'authenticated': 'Đã đăng nhập',
+                  'signed-out': 'Chưa đăng nhập',
+                  'synced': 'Đồng bộ thành công',
+                  'offline': 'Đang ngoại tuyến',
+                  'retrying': 'Đang chờ thử đồng bộ lại',
+                  'warning': 'Cảnh báo đồng bộ',
+                  'error': 'Đồng bộ gặp lỗi',
+                  'backup-restored': 'Đã hợp nhất dữ liệu'
+                };
+                statusEl.textContent = labels[status.state] || status.state;
+              }
+              if (detailEl) {
+                detailEl.textContent = status.user?.email || status.message ||
+                  (status.retryInMs ? `Thử lại sau ${Math.ceil(status.retryInMs / 1000)} giây.` : '') ||
+                  (status.localDataPreserved ? 'Dữ liệu trên thiết bị được giữ nguyên.' :
+                  (status.state === 'not-configured' ? 'Điền URL và anon key trong supabase-config.js.' : ''));
+              }
+              if (status.state === 'error') console.warn('[Kawaii Cloud]', status.message);
+            }
+          })
+        : null;
+      cloudSync?.init();
+
+      async function persistCompletedStudySession(session) {
+        if (!session || session.status !== 'completed') return false;
+        try {
+          await window.KawaiiDatabase?.saveCompletedSession(session);
+          await cloudSync?.syncNow(getCloudBackupSnapshot());
+          events.emit('session:persisted', { sessionId: session.id });
+          return true;
+        } catch (error) {
+          console.warn('[Kawaii Session Persistence]', error);
+          events.emit('session:persistence-error', { sessionId: session.id, error });
+          return false;
+        }
+      }
 
       window.KawaiiStudySession = studySession;
       window.KawaiiFlashcards = flashcards;
@@ -1861,7 +1964,7 @@
         });
 
         return Object.freeze({
-          version: '3.4.0-core',
+          version: '3.7.0-core',
           State,
           Events: events,
           Modules,
@@ -1872,12 +1975,14 @@
           Flashcards: flashcards,
           Quiz: quiz,
           WeakWords: weakWords,
+          CloudSync: cloudSync,
+          Database: window.KawaiiDatabase,
           Bootstrap
         });
       })();
 
       window.KawaiiApp = {
-        version: '3.4.0',
+        version: '3.7.0',
         Core,
         studySession,
         flashcards,
@@ -1885,6 +1990,8 @@
         weakWords,
         pronunciation,
         meaning,
+        cloud: cloudSync,
+        database: window.KawaiiDatabase,
         state,
         events,
         registerModule,
@@ -2125,11 +2232,16 @@
       $('trSpeakBtn').onclick = () => speakJapaneseText(state.activePopupSpeakText);
 
       function bindSwipeAndFlip(cardEl, onFlip, onPrev, onNext, getIsBusy) {
-        let startX = 0, startY = 0, dragging = false, didSwipe = false;
+        let startX = 0, startY = 0, startTime = 0, dragging = false, didSwipe = false;
+        const isFlashcard = cardEl.id === 'fcPerspective';
+        const clearSwipeFeedback = () => {
+          if (isFlashcard) cardEl.classList.remove('swiping-again', 'swiping-good');
+        };
         cardEl.addEventListener('pointerdown', (e) => {
           if (e.button !== 0 || e.target.closest('button') || e.target.closest('.tap-token') || getIsBusy()) return;
           cardEl.setPointerCapture(e.pointerId);
-          startX = e.clientX; startY = e.clientY; dragging = true; didSwipe = false;
+          startX = e.clientX; startY = e.clientY; startTime = performance.now();
+          dragging = true; didSwipe = false;
           cardEl.style.transition = 'none';
         });
         cardEl.addEventListener('pointermove', (e) => {
@@ -2138,26 +2250,46 @@
           if (Math.abs(dy) > 10) didSwipe = true;
           if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
             didSwipe = true;
-            cardEl.style.transform = `translateX(${Math.max(-90, Math.min(90, dx * 0.55))}px) rotate(${Math.max(-6, Math.min(6, dx * 0.04))}deg)`;
+            if (isFlashcard) {
+              cardEl.classList.toggle('swiping-again', dx < 0);
+              cardEl.classList.toggle('swiping-good', dx > 0);
+            }
+            cardEl.style.transform = `translateX(${Math.max(-150, Math.min(150, dx * 0.72))}px) rotate(${Math.max(-9, Math.min(9, dx * 0.045))}deg)`;
           }
         });
+        const resetCard = () => {
+          cardEl.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+          cardEl.style.transform = 'translateX(0) rotate(0deg)';
+          cardEl.style.opacity = '1';
+          clearSwipeFeedback();
+        };
         const finish = (e) => {
           if (!dragging) return;
           dragging = false;
           const dx = e.clientX - startX, dy = e.clientY - startY;
-          if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy)) {
+          const elapsed = Math.max(1, performance.now() - startTime);
+          const velocity = Math.abs(dx) / elapsed;
+          const threshold = Math.max(64, cardEl.clientWidth * 0.25);
+          const accepted = Math.abs(dx) >= threshold || (Math.abs(dx) >= 36 && velocity >= 0.65);
+          if (accepted && Math.abs(dx) > Math.abs(dy)) {
             didSwipe = true;
-            if (dx < 0) onNext(); else onPrev();
+            cardEl.style.transition = 'transform 0.16s ease-out, opacity 0.16s ease-out';
+            cardEl.style.transform = `translateX(${dx < 0 ? -520 : 520}px) rotate(${dx < 0 ? -12 : 12}deg)`;
+            cardEl.style.opacity = '0';
+            setTimeout(() => {
+              clearSwipeFeedback();
+              cardEl.style.transition = '';
+              cardEl.style.transform = '';
+              cardEl.style.opacity = '';
+              if (dx < 0) onNext(); else onPrev();
+            }, 125);
           } else {
-            cardEl.style.transition = 'transform 0.2s ease-out';
-            cardEl.style.transform = 'translateX(0) rotate(0deg)';
+            resetCard();
           }
         };
         cardEl.addEventListener('pointerup', finish);
         cardEl.addEventListener('pointercancel', () => {
-          dragging = false; didSwipe = true;
-          cardEl.style.transition = 'transform 0.2s ease-out';
-          cardEl.style.transform = 'translateX(0) rotate(0deg)';
+          dragging = false; didSwipe = true; resetCard();
         });
         cardEl.addEventListener('click', (e) => {
           if (e.target.closest('button') || e.target.closest('.tap-token') || didSwipe || getIsBusy()) return;
@@ -2171,9 +2303,6 @@
       $('fcSpeakFrontBtn').onclick = (e) => { e.stopPropagation(); speakWord(state.fcDeck[state.fcIndex]); };
       $('fcSpeakBackBtn').onclick = (e) => { e.stopPropagation(); speakWord(state.fcDeck[state.fcIndex]); };
       $('fcSpeakExBtn').onclick = (e) => { e.stopPropagation(); const w = state.fcDeck[state.fcIndex]; if (w?.example?.ja) speakJapaneseText(w.example.ja); };
-      $('fcRateAgainBtn').onclick = () => handleFlashcardRating('again');
-      $('fcRateHardBtn').onclick = () => handleFlashcardRating('hard');
-      $('fcRateGoodBtn').onclick = () => handleFlashcardRating('good');
       $('fcPrevBtn').onclick = () => moveCard(-1);
       $('fcNextBtn').onclick = () => moveCard(1);
       $('fcShuffleBtn').onclick = () => {
@@ -2310,6 +2439,75 @@
       $('btnDownloadZenMarine').onclick = () => initZenTtsFromCacheOrNetwork(true);
       $('btnModalDownloadZen').onclick = () => initZenTtsFromCacheOrNetwork(true);
       $('zenLocalFolderInput').onchange = (e) => { initZenTtsFromLocalFiles(e.target.files); e.target.value = ''; };
+
+      // Optional Supabase Account / Cloud Sync Controls
+      const cloudModal = $('cloudAccountModal');
+      $('btnCloudAccount').onclick = async () => {
+        cloudModal.classList.remove('hidden');
+        if (!cloudSync?.isConfigured()) {
+          $('cloudAccountStatus').textContent = 'Chưa cấu hình Supabase';
+          $('cloudAccountDetail').textContent = 'Điền URL và anon key trong supabase-config.js, sau đó chạy supabase-schema.sql.';
+          return;
+        }
+        try {
+          const user = await cloudSync.getUser();
+          $('cloudAccountStatus').textContent = user ? 'Đã đăng nhập' : 'Chưa đăng nhập';
+          $('cloudAccountDetail').textContent = user?.email || 'Bạn có thể học mà không cần đăng nhập.';
+        } catch (error) {
+          $('cloudAccountStatus').textContent = 'Không kiểm tra được tài khoản';
+          $('cloudAccountDetail').textContent = error.message || '';
+        }
+      };
+      $('closeCloudAccountBtn').onclick = () => cloudModal.classList.add('hidden');
+      cloudModal.addEventListener('click', event => {
+        if (event.target === cloudModal) cloudModal.classList.add('hidden');
+      });
+      $('cloudSignInBtn').onclick = async () => {
+        const email = $('cloudEmail').value.trim();
+        const password = $('cloudPassword').value;
+        if (!email || !password) { showToast('Nhập email và mật khẩu.', 'warning'); return; }
+        $('cloudSignInBtn').disabled = true;
+        try {
+          const result = await cloudSync.signIn(email, password);
+          $('cloudAccountStatus').textContent = 'Đã đăng nhập và hợp nhất dữ liệu';
+          $('cloudAccountDetail').textContent = result.user?.email || email;
+          showToast('Đăng nhập và đồng bộ thành công.', 'success');
+        } catch (error) {
+          showToast(error.message || 'Đăng nhập thất bại.', 'error');
+        } finally { $('cloudSignInBtn').disabled = false; }
+      };
+      $('cloudSignUpBtn').onclick = async () => {
+        const email = $('cloudEmail').value.trim();
+        const password = $('cloudPassword').value;
+        if (!email || !password) { showToast('Nhập email và mật khẩu.', 'warning'); return; }
+        $('cloudSignUpBtn').disabled = true;
+        try {
+          const result = await cloudSync.signUp(email, password);
+          showToast(result.session ? 'Tạo tài khoản thành công.' : 'Đã gửi email xác nhận nếu dự án yêu cầu xác minh email.', 'success');
+        } catch (error) {
+          showToast(error.message || 'Không tạo được tài khoản.', 'error');
+        } finally { $('cloudSignUpBtn').disabled = false; }
+      };
+      $('cloudSyncNowBtn').onclick = async () => {
+        $('cloudSyncNowBtn').disabled = true;
+        try {
+          const result = await cloudSync.syncNow(getCloudBackupSnapshot());
+          if (result.backup?.uploaded) showToast(`Đã sao lưu; tải lên ${result.sessions?.uploaded || 0} phiên hoàn thành.`, 'success');
+          else showToast('Chưa đăng nhập hoặc Supabase chưa được cấu hình.', 'info');
+        } catch (error) {
+          showToast(error.message || 'Sao lưu thất bại.', 'error');
+        } finally { $('cloudSyncNowBtn').disabled = false; }
+      };
+      $('cloudSignOutBtn').onclick = async () => {
+        try {
+          await cloudSync.signOut();
+          $('cloudAccountStatus').textContent = 'Đã đăng xuất';
+          $('cloudAccountDetail').textContent = 'Dữ liệu cục bộ vẫn được giữ nguyên.';
+          showToast('Đã đăng xuất. Dữ liệu trên thiết bị không bị xóa.', 'success');
+        } catch (error) {
+          showToast(error.message || 'Đăng xuất thất bại.', 'error');
+        }
+      };
 
       // Audio Modal Controls
       $('btnAudioSettings').onclick = () => {
@@ -2498,9 +2696,13 @@
         clone.querySelectorAll('#appCoreScript').forEach(script => script.remove());
         const body = clone.querySelector('body');
         if (body) {
-          body.querySelectorAll('script[src="database.js"], script[src="study-session.js"], script[src="flashcard.js"], script[src="quiz.js"], script[src="weak-words.js"], script[src="pronunciation.js"], script[src="meaning.js"], script[src="app.js"]').forEach(script => script.remove());
+          body.querySelectorAll('script[src="database.js"], script[src="supabase-config.js"], script[src="cloud-sync.js"], script[src="study-session.js"], script[src="flashcard.js"], script[src="quiz.js"], script[src="weak-words.js"], script[src="pronunciation.js"], script[src="meaning.js"], script[src="app.js"]').forEach(script => script.remove());
           const databaseScript = document.createElement('script');
           databaseScript.src = 'database.js';
+          const configScript = document.createElement('script');
+          configScript.src = 'supabase-config.js';
+          const cloudScript = document.createElement('script');
+          cloudScript.src = 'cloud-sync.js';
           const sessionScript = document.createElement('script');
           sessionScript.src = 'study-session.js';
           const flashcardScript = document.createElement('script');
@@ -2515,7 +2717,7 @@
           meaningScript.src = 'meaning.js';
           const appScript = document.createElement('script');
           appScript.src = 'app.js';
-          body.append(databaseScript, sessionScript, flashcardScript, quizScript, weakWordsScript, pronunciationScript, meaningScript, appScript);
+          body.append(databaseScript, configScript, cloudScript, sessionScript, flashcardScript, quizScript, weakWordsScript, pronunciationScript, meaningScript, appScript);
         }
 
         return '<!DOCTYPE html>\\n' + clone.outerHTML;
@@ -2570,10 +2772,13 @@
       if ($('btnExportZip')) {
         $('btnExportZip').onclick = async () => {
           try {
-            const [cssContent, jsContent, dbContent, sessionContent, flashcardContent, quizContent, weakWordsContent, pronunciationContent, meaningContent] = await Promise.all([
+            const [cssContent, jsContent, dbContent, configContent, cloudContent, schemaContent, sessionContent, flashcardContent, quizContent, weakWordsContent, pronunciationContent, meaningContent] = await Promise.all([
               readProjectAsset('styles.css'),
               readProjectAsset('app.js'),
               readProjectAsset('database.js'),
+              readProjectAsset('supabase-config.js'),
+              readProjectAsset('cloud-sync.js'),
+              readProjectAsset('supabase-schema.sql'),
               readProjectAsset('study-session.js'),
               readProjectAsset('flashcard.js'),
               readProjectAsset('quiz.js'),
@@ -2585,6 +2790,9 @@
               { name: 'index.html', content: buildSeparatedHtml() },
               { name: 'styles.css', content: cssContent },
               { name: 'database.js', content: dbContent },
+              { name: 'supabase-config.js', content: configContent },
+              { name: 'cloud-sync.js', content: cloudContent },
+              { name: 'supabase-schema.sql', content: schemaContent },
               { name: 'study-session.js', content: sessionContent },
               { name: 'flashcard.js', content: flashcardContent },
               { name: 'quiz.js', content: quizContent },
@@ -2628,8 +2836,41 @@
       // 15. BOOTSTRAP (Tự nạp dữ liệu đã lưu + Tự đồng bộ ngầm Google Sheets)
       // =======================================================================
       async function bootstrap() {
+        // Restore mirrored module state only when its localStorage copy is absent.
+        try {
+          await Promise.all([
+            window.KawaiiDatabase?.restoreMirroredStorage('study-session'),
+            window.KawaiiDatabase?.restoreMirroredStorage('quiz'),
+            window.KawaiiDatabase?.restoreMirroredStorage('weak-words')
+          ]);
+          const persistedProgress = await window.KawaiiDatabase?.getAppState('progress_snapshot');
+          if (!safeGetLS(STORAGE_PROGRESS_KEY, null) && persistedProgress) safeSetLS(STORAGE_PROGRESS_KEY, persistedProgress);
+          const persistedPrefs = await window.KawaiiDatabase?.getAppState('preferences_snapshot');
+          if (!safeGetLS(STORAGE_PREFS_KEY, null) && persistedPrefs) safeSetLS(STORAGE_PREFS_KEY, persistedPrefs);
+          studySession?.load();
+          quiz?.reload();
+          weakWords?.reload();
+        } catch (error) {
+          console.warn('[KawaiiDatabase] Khôi phục dữ liệu mirror không hoàn tất:', error);
+        }
         loadProgress();
         loadPrefs();
+        try {
+          await Promise.all([
+            window.KawaiiDatabase?.mirrorLocalJSON('kawaii_jlpt_active_session_v1', 'study-session:kawaii_jlpt_active_session_v1'),
+            window.KawaiiDatabase?.mirrorLocalJSON('kawaii_jlpt_quiz_data_v1', 'quiz:kawaii_jlpt_quiz_data_v1'),
+            window.KawaiiDatabase?.mirrorLocalJSON('kawaii_jlpt_weak_words_v1', 'weak-words:kawaii_jlpt_weak_words_v1'),
+            window.KawaiiDatabase?.saveAppState('progress_snapshot', {
+              wordStats: state.progress.wordStats,
+              streak: state.progress.streak,
+              bestStreak: state.progress.bestStreak,
+              totalPairsMatched: state.progress.totalPairsMatched
+            }),
+            window.KawaiiDatabase?.saveAppState('preferences_snapshot', state.prefs)
+          ]);
+        } catch (error) {
+          console.warn('[KawaiiDatabase] Initial local data migration failed:', error);
+        }
         state.prefs.sessionSize = 10;
         $('sessionSizeSelect').value = '10';
         $('sessionSizeSelect').disabled = true;
