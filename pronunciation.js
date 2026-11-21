@@ -147,10 +147,13 @@
       const mora = phoneticInfo && phoneticInfo.clearMora
         ? phoneticInfo.clearMora
         : String(kana || '');
+      // Single Kana must not be synthesized as a one-character sentence.
+      // Keep the existing 'with-word' sample behavior, but use Word Mode
+      // for both paths so Kana does not inherit sentence-style emotion.
       const text = mode === 'with-word' && phoneticInfo && phoneticInfo.sampleJa
         ? `${mora}。${phoneticInfo.sampleJa}。`
-        : `${mora}。`;
-      return speak(text, customPrefs);
+        : String(mora).trim();
+      return speak(text, wordPrefs({ ...getPrefs(), ...(customPrefs || {}) }));
     }
 
     return Object.freeze({
