@@ -59,6 +59,18 @@
       }
     }
 
+    // Isolate single-word synthesis from sentence synthesis without changing the voice.
+    // A neutral voice avoids applying sentence-style emotion to isolated vocabulary.
+    function wordPrefs(prefs) {
+      return {
+        ...prefs,
+        zenHappy: 0,
+        // Preserve the user's selected speed and pitch; do not split Japanese mora.
+        zenSpeed: Number(prefs.zenSpeed ?? 1),
+        zenPitch: Number(prefs.zenPitch ?? 0)
+      };
+    }
+
     function makeCacheKey(text, prefs) {
       return [prefs.zenSpeed ?? 1, prefs.zenPitch ?? 0, prefs.zenHappy ?? 60, text].join(':');
     }
@@ -127,7 +139,8 @@
     function speakWord(word, customPrefs = null) {
       if (!word) return Promise.resolve({ ok: false, reason: 'empty' });
       const reading = String(word.kana || word.kanji || '').trim();
-      return speak(reading, customPrefs);
+      // The sentence path remains unchanged. Word Mode only overrides emotion.
+      return speak(reading, wordPrefs({ ...getPrefs(), ...(customPrefs || {}) }));
     }
 
     function speakKana(kana, phoneticInfo = null, mode = 'single', customPrefs = null) {
