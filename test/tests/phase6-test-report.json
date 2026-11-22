@@ -1,0 +1,99 @@
+{
+  "phase": 6,
+  "version": "3.5.0",
+  "runtime_syntax": {
+    "app.js": {
+      "pass": true,
+      "error": ""
+    },
+    "database.js": {
+      "pass": true,
+      "error": ""
+    },
+    "study-session.js": {
+      "pass": true,
+      "error": ""
+    },
+    "flashcard.js": {
+      "pass": true,
+      "error": ""
+    },
+    "quiz.js": {
+      "pass": true,
+      "error": ""
+    },
+    "weak-words.js": {
+      "pass": true,
+      "error": ""
+    },
+    "pronunciation.js": {
+      "pass": true,
+      "error": ""
+    },
+    "meaning.js": {
+      "pass": true,
+      "error": ""
+    },
+    "cloud-sync.js": {
+      "pass": true,
+      "error": ""
+    },
+    "supabase-config.js": {
+      "pass": true,
+      "error": ""
+    }
+  },
+  "automated_tests": {
+    "phase2-srs.test.cjs": {
+      "pass": true,
+      "output": "PASS: Again 5 phút; Hard 1 ngày; Good 1-3-7-14-30; invalid rating bị từ chối.",
+      "error": ""
+    },
+    "phase3-session.test.cjs": {
+      "pass": true,
+      "output": "PASS: giới hạn 10 từ, xáo trộn duy nhất, Again requeue không giới hạn, khôi phục phiên, hoàn thành phiên, Flashcard gọi SRS Core.",
+      "error": ""
+    },
+    "phase4-quiz.test.cjs": {
+      "pass": true,
+      "output": "PASS: chọn 4 từ tối thiểu; đáp án hai chiều; phản hồi; hỏi lại một lần; lỗi lượt hỏi lại được tính; điểm tổng hợp.",
+      "error": ""
+    },
+    "phase4-weak-words.test.cjs": {
+      "pass": true,
+      "output": "PASS: cộng dồn lỗi hai nguồn; lỗi lặp tính đủ; yêu cầu đúng ở 2 phiên riêng mỗi nguồn; xóa trạng thái giữ lịch sử.",
+      "error": ""
+    },
+    "phase5-pronunciation.test.cjs": {
+      "pass": true,
+      "output": "PASS: ZEN-TTS; cache; Kana single; ZEN lỗi tự động fallback Web Speech; stop.",
+      "error": ""
+    },
+    "phase5-meaning.test.cjs": {
+      "pass": true,
+      "output": "PASS: greedy dictionary tokenization; punctuation; lookup popup; pronunciation callback; hide popup.",
+      "error": ""
+    },
+    "phase6-cloud-sync.test.cjs": {
+      "pass": true,
+      "output": "PASS: Supabase login; merge local+remote progress; backup upsert; only completed sessions uploaded/downloaded; sign-out keeps local data.",
+      "error": ""
+    },
+    "phase6-database-schema.test.cjs": {
+      "pass": true,
+      "output": "PASS: non-destructive IndexedDB v2 migration; dataset store retained; local mirror/restore; completed-only session repository.",
+      "error": ""
+    }
+  },
+  "static_checks": {
+    "script_load_order": true,
+    "cloud_account_modal": true,
+    "cloud_account_handlers": true,
+    "only_completed_session_save": true,
+    "app_cloud_backup_schedule": true,
+    "version_3_5": true,
+    "export_has_cloud_assets": true
+  },
+  "live_supabase_integration": "NOT TESTED — project URL/key not supplied; schema and client adapter are included",
+  "safari_ios_device_test": "NOT TESTED"
+}
