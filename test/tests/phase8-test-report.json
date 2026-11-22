@@ -1,0 +1,79 @@
+{
+  "phase": 8,
+  "version": "3.7.0",
+  "runtime_syntax": {
+    "quiz.js": true,
+    "weak-words.js": true,
+    "cloud-sync.js": true,
+    "meaning.js": true,
+    "database.js": true,
+    "flashcard.js": true,
+    "study-session.js": true,
+    "pronunciation.js": true,
+    "app.js": true,
+    "supabase-config.js": true
+  },
+  "tests": {
+    "phase2-srs.test.cjs": {
+      "pass": true,
+      "output": "PASS: Again 5 phút; Hard 1 ngày; Good 1-3-7-14-30; invalid rating bị từ chối.",
+      "error": ""
+    },
+    "phase3-session.test.cjs": {
+      "pass": true,
+      "output": "PASS: giới hạn 10 từ, xáo trộn duy nhất, Again requeue không giới hạn, khôi phục phiên, hoàn thành phiên, Flashcard gọi SRS Core.",
+      "error": ""
+    },
+    "phase4-quiz.test.cjs": {
+      "pass": true,
+      "output": "PASS: chọn 4 từ tối thiểu; đáp án hai chiều; phản hồi; hỏi lại một lần; lỗi lượt hỏi lại được tính; điểm tổng hợp.",
+      "error": ""
+    },
+    "phase4-weak-words.test.cjs": {
+      "pass": true,
+      "output": "PASS: cộng dồn lỗi hai nguồn; lỗi lặp tính đủ; yêu cầu đúng ở 2 phiên riêng mỗi nguồn; xóa trạng thái giữ lịch sử.",
+      "error": ""
+    },
+    "phase5-meaning.test.cjs": {
+      "pass": true,
+      "output": "PASS: greedy dictionary tokenization; punctuation; lookup popup; pronunciation callback; hide popup.",
+      "error": ""
+    },
+    "phase5-pronunciation.test.cjs": {
+      "pass": true,
+      "output": "PASS: ZEN-TTS; cache; Kana single; ZEN lỗi tự động fallback Web Speech; stop.",
+      "error": ""
+    },
+    "phase6-cloud-sync.test.cjs": {
+      "pass": true,
+      "output": "PASS: Supabase login; merge local+remote progress; backup upsert; only completed sessions uploaded/downloaded; sign-out keeps local data.",
+      "error": ""
+    },
+    "phase6-database-schema.test.cjs": {
+      "pass": true,
+      "output": "PASS: non-destructive IndexedDB v2 migration; dataset store retained; local mirror/restore; completed-only session repository.",
+      "error": ""
+    },
+    "phase7-account-isolation.test.cjs": {
+      "pass": true,
+      "output": "PASS: account mismatch is rejected and cannot merge another account local data.",
+      "error": ""
+    },
+    "phase7-offline-sync.test.cjs": {
+      "pass": true,
+      "output": "PASS: offline changes queue locally; online event retries; pull-merge-push preserves local and remote progress; account ownership is recorded.",
+      "error": ""
+    },
+    "phase7-supabase-schema.test.cjs": {
+      "pass": true,
+      "output": "PASS: completed sessions use a per-user composite key; upsert target and RLS remain aligned.",
+      "error": ""
+    },
+    "phase8-flashcard-ui.test.cjs": {
+      "pass": true,
+      "output": "PASS: old rating buttons removed; two arrow controls; swipe direction labels; SRS rating path retained; non-rating arrow navigation; SVG navigation icons.",
+      "error": ""
+    }
+  },
+  "ios_safari_device_test": "NOT TESTED"
+}
