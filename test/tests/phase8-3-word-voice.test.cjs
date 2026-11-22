@@ -1,0 +1,25 @@
+'use strict';
+const assert = require('node:assert/strict');
+global.window = global;
+global.URL.createObjectURL = () => 'blob:voice-test';
+global.URL.revokeObjectURL = () => {};
+global.Audio = class { constructor(src) { this.src = src; this.paused = true; } async play() { this.paused = false; } pause() { this.paused = true; } removeAttribute() {} load() {} };
+require('../pronunciation.js');
+(async () => {
+  const calls = [];
+  const engine = { speak: async (text, opts) => { calls.push({ text, opts }); return { wav: new Blob(['wav']) }; } };
+  const module = global.KawaiiPronunciationModule.create({ getEngine: () => engine, getPrefs: () => ({ zenHappy: 60, zenSpeed: 1.1, zenPitch: 0 }) });
+  await module.speakWord({ kana: 'がっこう', kanji: '学校' });
+  assert.equal(calls[0].text, 'がっこう');
+  assert.deepEqual(calls[0].opts.emotion, { happy: 0, neutral: 100 });
+  assert.equal(calls[0].opts.speed, 1.1);
+  await module.speak('今日は学校へ行きます。');
+  assert.deepEqual(calls[1].opts.emotion, { happy: 60, neutral: 40 }, 'sentence settings unchanged');
+  await module.speak('がっこう');
+  assert.deepEqual(calls[2].opts.emotion, { happy: 60, neutral: 40 }, 'word and sentence caches must be separate');
+  await module.speakWord({ kana: 'がっこう' });
+  assert.equal(calls.length, 3, 'word cache should be reused');
+  await module.speakWord({ kanji: '日本' });
+  assert.equal(calls[3].text, '日本', 'Kanji fallback remains supported');
+  console.log('PASS: neutral word voice, unchanged sentence voice, separate cache, kana priority, speed preserved');
+})().catch(err => { console.error(err); process.exitCode = 1; });
