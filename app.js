@@ -143,6 +143,7 @@
         },
         lesson: null,
         lessonBrowserOpen: false,
+        lessonStudying: false,
         lessonLevel: 'N5',
         fcDeck: [],
         fcIndex: 0,
@@ -1066,16 +1067,16 @@
         const home = $('lessonHome');
         home.classList.toggle('hidden', state.mode !== 'flashcard');
         if (state.mode !== 'flashcard') return;
-        $('lessonBrowser').classList.toggle('hidden', !state.lessonBrowserOpen);
+        $('lessonBrowser').classList.toggle('hidden', !state.lessonBrowserOpen || state.lessonStudying);
         $('lessonActions').classList.toggle('hidden', !state.lesson);
-        $('flashcardView').classList.toggle('hidden', !state.lesson);
+        $('flashcardView').classList.toggle('hidden', !state.lessonStudying);
         const levels = $('lessonLevels');
         levels.replaceChildren();
         LEVELS.filter(level => state.words.some(w => w.level === level)).forEach(level => {
           const b = document.createElement('button');
           b.type = 'button'; b.textContent = level;
           b.className = 'rounded-xl px-4 py-2 text-xs font-extrabold ' + (state.lessonLevel === level ? 'bg-[#FB6F92] text-white' : 'bg-[#F6EFE8]');
-          b.onclick = () => { state.lessonLevel = level; state.lesson = null; renderLessonBrowser(); };
+          b.onclick = () => { state.lessonLevel = level; state.lesson = null; state.lessonStudying = false; renderLessonBrowser(); };
           levels.appendChild(b);
         });
         const list = $('lessonList'); list.replaceChildren();
@@ -1087,7 +1088,7 @@
           const title = document.createElement('strong'); title.className = 'block text-sm'; title.textContent = `Bài ${i + 1} · ${lesson.topic}`;
           const desc = document.createElement('span'); desc.className = 'text-xs text-[#786D69]'; desc.textContent = `${completed}/${lesson.words.length} từ đã học`;
           b.append(title, desc);
-          b.onclick = () => { state.lesson = lesson; renderLessonBrowser(); };
+          b.onclick = () => { state.lesson = lesson; startLesson(false); };
           list.appendChild(b);
         });
         if (state.lesson) {
@@ -1102,7 +1103,7 @@
         const lesson = state.lesson;
         if (!lesson) return;
         const words = restart ? lesson.words : lesson.words.filter(w => !lessonGood[w.id]);
-        if (!words.length) { showToast('Bài này đã hoàn thành. Hãy chọn Học lại toàn bộ.', 'info'); return; }
+        if (!words.length) { state.lessonStudying = false; renderLessonBrowser(); showToast('Bài này đã hoàn thành. Hãy chọn Học lại toàn bộ.', 'info'); return; }
         studySession?.clear();
         state.prefs.level = lesson.level;
         state.prefs.topic = lesson.topic;
@@ -1110,12 +1111,13 @@
         savePrefs();
         rebuildTopicOptions();
         state.fcDeck = flashcards.start(words, { limit: words.length });
+        state.lessonStudying = true;
         state.fcIndex = 0; state.fcFlipped = false;
         state.sessionStats = { reviewed: 0, good: 0, again: 0 };
         renderAll();
       }
       $('btnBeginLessons').onclick = () => { state.lessonBrowserOpen = true; renderLessonBrowser(); };
-      $('btnLessonBack').onclick = () => { state.lesson = null; studySession?.clear(); renderAll(); };
+      $('btnLessonBack').onclick = () => { state.lesson = null; state.lessonStudying = false; studySession?.clear(); renderAll(); };
       $('btnLessonContinue').onclick = () => startLesson(false);
       $('btnLessonRestart').onclick = () => startLesson(true);
 
@@ -1725,7 +1727,7 @@
 
       function renderAll() {
         renderHeader();
-        $('flashcardView').classList.toggle('hidden', state.mode !== 'flashcard' || !state.lesson);
+        $('flashcardView').classList.toggle('hidden', state.mode !== 'flashcard' || !state.lessonStudying);
         renderLessonBrowser();
         $('matchingView').classList.toggle('hidden', state.mode !== 'matching');
         $('kanaView').classList.toggle('hidden', state.mode !== 'kana');
