@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Kawaii JLPT — Lật Thẻ, SRS &amp; Google Sheets</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CSS CDN (hoặc đổi thành vendor/tailwind.min.css khi chạy offline trên repo) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Nunito', 'system-ui', 'sans-serif'],
+            jp: ['"M PLUS Rounded 1c"', '"Hiragino Maru Gothic ProN"', 'sans-serif']
+          },
+          colors: {
+            peach: { 50: '#FFF1F3', 100: '#FFE4E8', 400: '#FF8FA3', 500: '#FB6F92' },
+            matcha: { 50: '#ECFDF5', 100: '#D1FAE5', 400: '#34D399', 500: '#10B981', 600: '#059669' },
+            skysoft: { 50: '#EFF6FF', 100: '#DBEAFE', 500: '#3B82F6' }
+          },
+          boxShadow: {
+            soft: '0 8px 28px -6px rgba(51, 46, 46, 0.07)',
+            card: '0 16px 38px -12px rgba(251, 111, 146, 0.16), 0 4px 12px -2px rgba(51, 46, 46, 0.05)'
+          }
+        }
+      }
+    };
+  </script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- ==================== TOP NAVIGATION & STATUS HEADER ==================== -->
+  <header class="sticky top-0 z-30 bg-[#FFFDF9]/92 backdrop-blur-md border-b border-[#F1ECE6]">
+    <div class="max-w-4xl mx-auto px-3 sm:px-5 py-2.5 flex flex-col gap-2.5">
+      <!-- Row 1: Brand + Mode Tabs + Audio Settings -->
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <div class="w-9 h-9 rounded-2xl bg-gradient-to-br from-[#FF8FA3] to-[#FB6F92] text-white flex items-center justify-center font-jp font-extrabold text-lg shadow-sm shrink-0">
+            あ
+          </div>
+          <div class="leading-tight truncate">
+            <h1 class="font-extrabold text-base sm:text-lg text-[#332E2E] tracking-tight truncate">Kawaii JLPT</h1>
+            <p id="headerDatasetLabel" class="text-[11px] font-semibold text-[#8C7F7A] truncate">Đang tải dữ liệu...</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 shrink-0">
+          <nav id="modeNav" class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl gap-1 shrink-0" aria-label="Chế độ">
+            <button id="navFlashcard" type="button" aria-label="Lật thẻ" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="flashcard">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></span><span class="hidden md:inline">Lật thẻ</span>
+            </button>
+            <button id="navMatching" type="button" aria-label="Nối từ" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="matching">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 4h3a2 2 0 1 1 4 0h3v5a2 2 0 1 1 0 4v7h-5a2 2 0 1 0-4 0H5v-6a2 2 0 1 1 0-4V4z"/></svg></span><span class="hidden md:inline">Nối từ</span>
+            </button>
+            <button id="navKana" type="button" aria-label="Bảng chữ cái" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="kana">
+              <span class="font-jp font-extrabold text-xs sm:text-sm">あア</span><span class="hidden md:inline">Bảng chữ</span>
+            </button>
+            <button id="navData" type="button" aria-label="Mô-đun và dữ liệu" class="mode-tab px-2.5 sm:px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-1" data-mode="data">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4v10l-8 4-8-4V7l8-4z"/><path d="m4 7 8 4 8-4M12 11v10"/></svg></span><span class="hidden md:inline">Mô-đun</span>
+            </button>
+          </nav>
+
+<button id="btnCloudAccount" type="button" aria-label="Tài khoản và đồng bộ" title="Đồng bộ đám mây" class="w-9 h-9 rounded-2xl bg-[#F6EFE8] text-[#4A4240] flex items-center justify-center shrink-0"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 18h11a4 4 0 0 0 .4-8 6.5 6.5 0 0 0-12.6 1.3A3.5 3.5 0 0 0 7 18z"/></svg></button>
+          <button id="btnAudioSettings" aria-label="Cài đặt âm thanh" type="button" class="w-9 h-9 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] flex items-center justify-center text-sm transition shrink-0 relative" title="Cài đặt ZEN-TTS Marine">
+            🎧
+            <span id="zenStatusDot" class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#D1C7BF]"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Row 2: Study Status Bar -->
+      <div id="studyStatusBar" class="flex flex-col gap-2">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div id="levelPills" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5"></div>
+          <div class="flex items-center gap-2 ml-auto">
+            <select id="topicSelect" class="text-xs font-bold bg-white border border-[#E8DFD6] text-[#4A4240] rounded-xl px-2.5 py-1.5 outline-none focus:border-[#FF8FA3] max-w-[155px] sm:max-w-[200px] truncate">
+              <option value="ALL">Tất cả chủ đề</option>
+            </select>
+            <button id="furiToggleBtn" type="button" class="px-2.5 py-1.5 rounded-xl text-xs font-extrabold border transition-all flex items-center gap-1.5 shrink-0" title="Bật/tắt phiên âm Hiragana (Furigana)">
+              <span class="font-jp">あ</span>
+              <span>Furi</span>
+              <span id="furiDot" class="w-2 h-2 rounded-full"></span>
+            </button>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="flex-1 h-2.5 bg-[#F3ECE4] rounded-full overflow-hidden">
+            <div id="levelProgressFill" class="h-full bg-gradient-to-r from-[#FF8FA3] to-[#34D399] rounded-full transition-all duration-500" style="width: 0%"></div>
+          </div>
+          <span id="levelProgressText" class="text-xs font-extrabold text-[#5E524E] whitespace-nowrap">JLPT N5 — 0/0</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==================== MAIN WORKSPACE ==================== -->
+  <main id="appWorkspace" class="flex-1 max-w-4xl w-full mx-auto px-3 sm:px-5 py-4 sm:py-6 flex flex-col">
+
+    <section id="lessonHome" class="bg-white border border-[#F1ECE6] rounded-3xl shadow-soft p-5 mb-4 flex flex-col gap-3">
+      <h2 class="text-lg font-extrabold text-[#332E2E]">Học từ vựng theo bài</h2>
+      <p class="text-xs text-[#786D69]">Bài học tự chia theo chủ đề từ Google Sheets, khoảng 8–12 từ/bài.</p>
+      <button id="btnBeginLessons" type="button" class="rounded-2xl bg-[#FB6F92] text-white font-extrabold px-5 py-3">Bắt đầu học</button>
+      <div id="lessonBrowser" class="hidden flex flex-col gap-3">
+        <div id="lessonLevels" class="flex gap-2 flex-wrap"></div>
+        <div id="lessonList" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+      </div>
+      <div id="lessonActions" class="hidden flex flex-col gap-2 border-t border-[#F1ECE6] pt-3">
+        <p id="lessonSelectedInfo" class="font-extrabold text-sm"></p>
+        <div class="flex gap-2 flex-wrap">
+          <button id="btnLessonContinue" type="button" class="rounded-xl bg-[#FB6F92] text-white text-xs font-extrabold px-4 py-2.5">Học tiếp</button>
+          <button id="btnLessonRestart" type="button" class="rounded-xl border border-[#E8DFD6] text-xs font-extrabold px-4 py-2.5">Học lại toàn bộ</button>
+          <button id="btnLessonBack" type="button" class="rounded-xl bg-[#F6EFE8] text-xs font-extrabold px-4 py-2.5">Danh sách bài</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 1: FLASHCARD 3D + SRS + SESSION BATCHING -->
+    <section id="flashcardView" class="flex-1 flex flex-col items-center justify-between gap-3.5">
+      <!-- SRS Reminder & Filter + Session Size Bar -->
+      <div class="w-full flex flex-col gap-2">
+        <div class="w-full flex items-center justify-between gap-2 flex-wrap">
+          <div class="flex items-center gap-1 bg-[#F6EFE8] p-1 rounded-2xl text-xs font-bold overflow-x-auto no-scrollbar max-w-full">
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="SMART">🎯 Phiên học</button>
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="DUE">🔔 Cần ôn (<span id="dueCountBadge">0</span>)</button>
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="NEW">🆕 Mới (<span id="newCountBadge">0</span>)</button>
+            <button type="button" class="fc-filter-btn px-2.5 py-1 rounded-xl transition whitespace-nowrap" data-filter="ALL">Tất cả</button>
+          </div>
+
+          <div class="flex items-center gap-1.5 text-xs font-bold text-[#786D69] ml-auto">
+            <select id="sessionSizeSelect" title="Số từ mỗi phiên học" class="text-xs font-bold bg-white border border-[#E8DFD6] text-[#4A4240] rounded-xl px-2 py-1 outline-none focus:border-[#FF8FA3]">
+              <option value="10">10 từ/phiên</option>
+              <option value="20">20 từ/phiên</option>
+              <option value="30">30 từ/phiên</option>
+              <option value="0">Không giới hạn</option>
+            </select>
+            <span id="fcCounter" class="px-1.5 whitespace-nowrap">0 / 0</span>
+            <button id="fcShuffleBtn" type="button" class="px-2.5 py-1 rounded-xl bg-white border border-[#E8DFD6] hover:border-[#FF8FA3] transition" title="Xáo trộn phiên hiện tại">🔀</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Flashcard Stage -->
+      <div class="w-full max-w-xl flex-1 min-h-[350px] sm:min-h-[390px] flex items-center justify-center">
+        <!-- Empty / Session Complete State -->
+        <div id="fcEmptyFilter" class="hidden bg-white border border-[#F1ECE6] rounded-3xl p-7 text-center w-full shadow-soft animate-pop">
+          <p id="fcEmptyIcon" class="text-3xl mb-2">🎉</p>
+          <p id="fcEmptyTitle" class="text-lg font-extrabold text-[#332E2E]">Hoàn thành phiên học!</p>
+          <p id="fcEmptyDesc" class="text-xs text-[#786D69] mt-1.5 leading-relaxed"></p>
+          <div id="fcSessionSummary" class="hidden mt-4 grid grid-cols-3 gap-2 text-center">
+            <div class="rounded-2xl bg-[#FFFDF9] border border-[#F1ECE6] p-2.5">
+              <p class="text-[10px] font-bold text-[#8C7F7A]">Đã ôn</p>
+              <p id="sumReviewed" class="text-lg font-extrabold text-[#332E2E]">0</p>
+            </div>
+            <div class="rounded-2xl bg-matcha-50 border border-[#A7F3D0] p-2.5">
+              <p class="text-[10px] font-bold text-matcha-600">Nhớ tốt</p>
+              <p id="sumGood" class="text-lg font-extrabold text-matcha-600">0</p>
+            </div>
+            <div class="rounded-2xl bg-[#FFF4ED] border border-[#FED7AA] p-2.5">
+              <p class="text-[10px] font-bold text-[#EA580C]">Cần học lại</p>
+              <p id="sumAgain" class="text-lg font-extrabold text-[#EA580C]">0</p>
+            </div>
+          </div>
+          <div class="mt-5 flex items-center justify-center gap-2 flex-wrap">
+            <button id="btnStartQuizAfterSession" type="button" class="px-5 py-2.5 rounded-2xl bg-[#5B8DEF] text-white font-extrabold text-xs sm:text-sm shadow-sm hover:opacity-95 active:scale-95 transition">
+              📝 Làm trắc nghiệm
+            </button>
+            <button id="btnStartNextSession" type="button" class="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#FF8FA3] to-[#FB6F92] text-white font-extrabold text-xs sm:text-sm shadow-sm hover:opacity-95 active:scale-95 transition">
+              ▶ Học phiên tiếp theo
+            </button>
+            <button id="btnViewAllCards" type="button" class="px-4 py-2.5 rounded-2xl bg-[#F6EFE8] text-[#4A4240] font-extrabold text-xs sm:text-sm hover:bg-[#EDE3D8] transition">
+              Xem tất cả từ
+            </button>
+          </div>
+        </div>
+
+        <!-- 3D Card -->
+        <div id="fcPerspective" tabindex="0" role="button" aria-label="Lật thẻ từ vựng" style="touch-action: pan-y;" class="perspective-1000 w-full h-[355px] sm:h-[395px] cursor-pointer select-none">
+          <div class="fc-swipe-feedback fc-swipe-again" aria-hidden="true">CẦN ÔN LẠI</div>
+          <div class="fc-swipe-feedback fc-swipe-good" aria-hidden="true">ĐÃ THUỘC</div>
+          <div id="fcInner" class="flashcard-inner">
+            <!-- FRONT FACE -->
+            <div class="flashcard-face bg-white border border-[#F1ECE6] rounded-[28px] shadow-card p-5 sm:p-7 flex flex-col justify-between">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span id="fcLevelBadge" class="px-2.5 py-1 rounded-xl text-xs font-extrabold bg-peach-50 text-peach-500 shrink-0">N5</span>
+                  <span id="fcSrsBadge" class="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-skysoft-50 text-skysoft-500 shrink-0">🆕 Từ mới</span>
+                  <span id="fcTopicBadge" class="hidden sm:inline-block px-2.5 py-1 rounded-xl text-xs font-bold bg-[#F6EFE8] text-[#6E625E] truncate max-w-[140px]">Chủ đề</span>
+                </div>
+                <button id="fcSpeakFrontBtn" type="button" class="w-9 h-9 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90 shrink-0" title="Nghe phát âm (R)">
+                  <svg viewBox="0 0 24 24" class="sound-icon" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"/></svg>
+                </button>
+              </div>
+
+              <div class="flex flex-col items-center justify-center text-center my-auto px-2">
+                <p id="fcFurigana" class="font-jp text-base sm:text-xl font-bold text-[#FB6F92] mb-1 min-h-[24px] transition-opacity duration-200"></p>
+                <h2 id="fcKanji" class="font-jp text-4xl sm:text-5xl font-extrabold text-[#2B2626] tracking-wide leading-snug"></h2>
+                <p id="fcRomaji" class="text-xs sm:text-sm font-bold text-[#9C8F8A] mt-2 min-h-[18px] transition-opacity duration-200"></p>
+                <span class="mt-3 text-[11px] font-bold text-peach-500/85 bg-peach-50 px-3 py-1 rounded-full">
+                  👆 Ấn vào từng chữ để tra dịch · Ấn vùng trống để lật
+                </span>
+              </div>
+
+              <div class="flex items-center justify-between text-xs font-bold text-[#A89B96] gap-2">
+                <span id="fcHanViet" class="uppercase tracking-wider truncate"></span>
+                <span class="shrink-0">Lật ↻ · Lướt ↔</span>
+              </div>
+            </div>
+
+            <!-- BACK FACE -->
+            <div class="flashcard-face flashcard-back bg-gradient-to-b from-white to-[#FFF8FA] border border-[#F4E3E8] rounded-[28px] shadow-card p-5 sm:p-7 flex flex-col justify-between overflow-y-auto">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span id="fcBackWordMini" class="font-jp text-sm font-extrabold text-[#786D69] truncate"></span>
+                  <span id="fcPosBadge" class="hidden px-2 py-0.5 rounded-lg bg-[#F6EFE8] text-[#786D69] text-[10px] font-extrabold shrink-0"></span>
+                </div>
+                <button id="fcSpeakBackBtn" type="button" class="w-9 h-9 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90 shrink-0" title="Nghe lại phát âm">
+                  <svg viewBox="0 0 24 24" class="sound-icon" aria-hidden="true"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M16 9a5 5 0 0 1 0 6M18.5 6.5a9 9 0 0 1 0 11"/></svg>
+                </button>
+              </div>
+
+              <div class="my-auto py-2 text-center">
+                <p class="text-[11px] font-extrabold uppercase tracking-wider text-[#FB6F92] mb-1">Nghĩa tiếng Việt</p>
+                <h3 id="fcMeaning" class="text-xl sm:text-2xl font-extrabold text-[#2B2626] leading-snug mb-3"></h3>
+
+                <!-- Interactive Example Sentence -->
+                <div id="fcExampleBox" class="hidden bg-white/95 border border-[#F1ECE6] rounded-2xl p-3 text-left mb-3">
+                  <div class="flex items-center justify-between gap-2 mb-1">
+                    <span class="text-[10px] font-extrabold uppercase tracking-wider text-[#8C7F7A]">Ví dụ (ấn từng từ để dịch)</span>
+                    <button id="fcSpeakExBtn" type="button" class="px-2 py-0.5 rounded-lg bg-peach-50 text-peach-500 text-[11px] font-extrabold hover:bg-peach-100 transition">
+                      🔊 Đọc câu
+                    </button>
+                  </div>
+                  <p id="fcExJa" class="font-jp text-sm sm:text-base font-bold text-[#332E2E] leading-relaxed"></p>
+                  <p id="fcExRomaji" class="text-[11px] text-[#9C8F8A] mt-0.5 font-semibold"></p>
+                  <p id="fcExVi" class="text-xs sm:text-sm text-[#6E625E] mt-1 font-semibold"></p>
+                </div>
+
+                <!-- Related Words -->
+                <div id="fcRelatedBox" class="hidden text-left">
+                  <p class="text-[11px] font-extrabold text-[#8C7F7A] uppercase tracking-wider mb-1.5">🔗 Từ liên quan cùng Kanji</p>
+                  <div id="fcRelatedList" class="flex flex-wrap gap-1.5"></div>
+                </div>
+              </div>
+
+              <div class="text-center text-[11px] font-bold text-[#A89B96]">
+                Vuốt trái: Cần ôn lại · Vuốt phải: Đã thuộc
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Minimal navigation: arrows never change SRS; only swipe rates a card -->
+      <div class="w-full max-w-xl flex items-center justify-between gap-4 pt-1">
+        <button id="fcPrevBtn" type="button" aria-label="Từ trước" title="Từ trước" class="fc-nav-arrow" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <p class="flex-1 text-center text-[11px] font-semibold text-[#9A8C86]">
+          Vuốt trái <span class="text-[#D96B83]">· Ôn lại</span>
+          <span class="mx-1.5 text-[#D8CEC8]">|</span>
+          Vuốt phải <span class="text-[#26966B]">· Đã thuộc</span>
+        </p>
+        <button id="fcNextBtn" type="button" aria-label="Từ tiếp theo" title="Từ tiếp theo" class="fc-nav-arrow" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- VIEW 2: PAIR MATCHING (NỐI TỪ 2 NGÔN NGỮ) -->
+    <section id="matchingView" class="hidden flex-1 flex flex-col gap-4">
+      <div class="bg-white border border-[#F1ECE6] rounded-2xl p-3 sm:p-4 shadow-soft flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-3 flex-1 min-w-[180px]">
+          <span id="matchPairCounter" class="text-xs sm:text-sm font-extrabold text-[#332E2E] whitespace-nowrap">0/5 cặp</span>
+          <div class="flex-1 h-2.5 bg-[#F3ECE4] rounded-full overflow-hidden max-w-[200px]">
+            <div id="matchProgressFill" class="h-full bg-gradient-to-r from-[#60A5FA] to-[#34D399] rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+          <span id="matchStreakBadge" class="px-2.5 py-1 rounded-xl bg-[#FEF3C7] text-[#D97706] text-xs font-extrabold whitespace-nowrap">⚡ 0</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="matchSwapBtn" type="button" class="px-3 py-1.5 rounded-xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] text-xs font-extrabold transition flex items-center gap-1">
+            <span id="matchDirectionLabel">Nhật ⇄ Việt</span>
+          </button>
+          <button id="matchNewRoundBtn" type="button" class="px-3 py-1.5 rounded-xl bg-peach-50 hover:bg-peach-100 text-peach-500 text-xs font-extrabold transition">
+            🔄 Lượt mới
+          </button>
+        </div>
+      </div>
+
+      <p id="matchEmpty" class="hidden text-center text-sm text-[#8C7F7A] p-6">Không có từ ở cấp độ/chủ đề này. Hãy chọn bộ lọc khác.</p>
+
+      <div class="grid grid-cols-2 gap-3 sm:gap-5 flex-1 content-start">
+        <div id="matchLeftCol" class="flex flex-col gap-2.5 sm:gap-3"></div>
+        <div id="matchRightCol" class="flex flex-col gap-2.5 sm:gap-3"></div>
+      </div>
+
+      <div id="matchRoundComplete" class="hidden bg-matcha-50 border border-[#A7F3D0] rounded-3xl p-5 text-center animate-pop">
+        <p class="text-lg font-extrabold text-matcha-600 mb-1">🎉 Tuyệt vời! Bạn đã nối xong lượt này!</p>
+        <p class="text-xs text-[#047857] mb-3 font-semibold">Chuỗi đúng hiện tại: <span id="matchCompleteStreak">0</span> ⚡</p>
+        <button id="matchNextRoundCta" type="button" class="px-5 py-2.5 rounded-2xl bg-matcha-500 text-white font-extrabold text-sm hover:bg-matcha-600 active:scale-95 transition">
+          Chơi lượt tiếp theo →
+        </button>
+      </div>
+    </section>
+
+    <!-- VIEW 3: KANA ALPHABET (DẠNG LẬT THẺ 3D + BẢNG LƯỚI) -->
+    <section id="kanaView" class="hidden flex-1 flex flex-col gap-4 animate-pop">
+      <div class="bg-white border border-[#F1ECE6] rounded-3xl p-4 sm:p-5 shadow-soft flex flex-col gap-3">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div>
+            <h2 class="text-base sm:text-lg font-extrabold text-[#332E2E] flex items-center gap-2 flex-wrap">
+              <span>🌸 Bảng chữ cái tiếng Nhật</span>
+              <span class="text-xs font-extrabold px-2.5 py-0.5 rounded-xl bg-peach-50 text-peach-500">🎙️ ZEN-TTS Marine</span>
+            </h2>
+            <p class="text-xs text-[#8C7F7A] mt-0.5">Học qua thẻ lật 3D hoặc xem toàn bộ bảng lưới 46 âm cơ bản, âm đục &amp; âm ghép.</p>
+          </div>
+
+          <div class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl text-xs font-extrabold self-start sm:self-auto shrink-0">
+            <button id="kanaViewCardBtn" type="button" class="px-3 py-1.5 rounded-xl transition">🃏 Lật thẻ</button>
+            <button id="kanaViewGridBtn" type="button" class="px-3 py-1.5 rounded-xl transition">▦ Xem lưới</button>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-[#F6EFE8]">
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl text-xs font-extrabold">
+              <button id="kanaScriptHira" type="button" class="px-3 py-1 rounded-xl transition">あ Hiragana</button>
+              <button id="kanaScriptKata" type="button" class="px-3 py-1 rounded-xl transition">ア Katakana</button>
+            </div>
+            <div class="flex items-center bg-[#F6EFE8] p-1 rounded-2xl text-xs font-bold">
+              <button type="button" class="kana-group-btn px-2.5 py-1 rounded-xl transition" data-kgroup="seion">Cơ bản (46)</button>
+              <button type="button" class="kana-group-btn px-2.5 py-1 rounded-xl transition" data-kgroup="dakuon">Âm đục (25)</button>
+              <button type="button" class="kana-group-btn px-2.5 py-1 rounded-xl transition" data-kgroup="yoon">Âm ghép (33)</button>
+            </div>
+          </div>
+
+          <button id="kanaModeQuickBtn" type="button" class="px-3 py-1.5 rounded-2xl text-xs font-extrabold transition flex items-center gap-1.5">
+            <span>🔊</span><span id="kanaModeQuickLabel">Âm chuẩn rõ</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- KANA SUB-VIEW A: FLASHCARD 3D -->
+      <div id="kanaFlashcardWrap" class="flex-1 flex flex-col items-center justify-between gap-4">
+        <div class="w-full max-w-md flex items-center justify-between text-xs font-bold text-[#786D69] px-1">
+          <span id="kanaFcCounter">1 / 46</span>
+          <button id="kanaFcShuffleBtn" type="button" class="px-3 py-1 rounded-xl bg-white border border-[#E8DFD6] hover:border-[#FF8FA3] transition">
+            🔀 Trộn bảng chữ
+          </button>
+        </div>
+
+        <div id="kanaPerspective" tabindex="0" role="button" aria-label="Lật thẻ chữ cái" style="touch-action: pan-y;" class="perspective-1000 w-full max-w-md h-[320px] sm:h-[350px] cursor-pointer select-none">
+          <div id="kanaInner" class="flashcard-inner">
+            <div class="flashcard-face bg-white border border-[#F1ECE6] rounded-[28px] shadow-card p-6 flex flex-col justify-between">
+              <div class="flex items-center justify-between">
+                <span id="kanaFrontTag" class="px-2.5 py-1 rounded-xl text-xs font-extrabold bg-peach-50 text-peach-500">Hiragana · Cơ bản</span>
+                <button id="kanaSpeakFrontBtn" type="button" class="w-10 h-10 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90 text-base">
+                  🔊
+                </button>
+              </div>
+              <div class="my-auto text-center">
+                <div id="kanaFrontChar" class="font-jp text-8xl sm:text-9xl font-extrabold text-[#2B2626] leading-none">あ</div>
+              </div>
+              <div class="text-center text-xs font-bold text-[#A89B96]">
+                Ấn vào thẻ để xem cách đọc ↻ · Lướt ↔ đổi chữ
+              </div>
+            </div>
+
+            <div class="flashcard-face flashcard-back bg-gradient-to-b from-white to-[#FFF8FA] border border-[#F4E3E8] rounded-[28px] shadow-card p-6 flex flex-col justify-between">
+              <div class="flex items-center justify-between">
+                <span id="kanaBackPairLabel" class="text-xs font-extrabold text-[#8C7F7A]">Đối chiếu Katakana</span>
+                <button id="kanaSpeakBackBtn" type="button" class="w-10 h-10 rounded-2xl bg-[#FFF1F3] text-[#FB6F92] hover:bg-[#FFE4E8] flex items-center justify-center transition active:scale-90 text-base">
+                  🔊
+                </button>
+              </div>
+              <div class="my-auto text-center flex flex-col items-center gap-3">
+                <div id="kanaBackRomaji" class="text-4xl sm:text-5xl font-extrabold text-peach-500 tracking-wide">a</div>
+                <div class="flex items-center gap-3">
+                  <div class="px-4 py-2 rounded-2xl bg-white border border-[#F1ECE6] text-center">
+                    <p class="text-[10px] font-extrabold text-[#8C7F7A] uppercase">Chữ đối chiếu</p>
+                    <p id="kanaBackCounterpart" class="font-jp text-2xl font-extrabold text-[#332E2E]">ア</p>
+                  </div>
+                  <div class="px-4 py-2 rounded-2xl bg-white border border-[#F1ECE6] text-center">
+                    <p class="text-[10px] font-extrabold text-[#8C7F7A] uppercase">Từ vựng mẫu</p>
+                    <p id="kanaBackSample" class="font-jp text-xl font-extrabold text-[#332E2E]">あめ</p>
+                  </div>
+                </div>
+              </div>
+              <div class="text-center text-xs font-bold text-[#A89B96]">
+                Ấn để lật lại ↺
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="w-full max-w-md flex items-center justify-between gap-2.5">
+          <button id="kanaPrevBtn" type="button" class="flex-1 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">← Trước</button>
+          <button id="kanaFlipBtn" type="button" class="flex-1 py-3 rounded-2xl bg-peach-50 border border-[#FFD6DF] text-peach-500 font-extrabold text-sm hover:bg-peach-100 active:scale-95 transition">↻ Lật thẻ</button>
+          <button id="kanaNextBtn" type="button" class="flex-1 py-3 rounded-2xl bg-white border border-[#E8DFD6] text-[#5E524E] font-extrabold text-sm hover:bg-[#FAF5F0] active:scale-95 transition">Tiếp →</button>
+        </div>
+      </div>
+
+      <!-- KANA SUB-VIEW B: GRID -->
+      <div id="kanaGridContainer" class="hidden bg-white border border-[#F1ECE6] rounded-3xl p-3 sm:p-5 shadow-soft">
+        <div id="kanaGrid" class="grid grid-cols-5 gap-2 sm:gap-3"></div>
+      </div>
+    </section>
+
+    <!-- VIEW 4: MODULES & GOOGLE SHEETS HUB -->
+    <section id="dataView" class="hidden flex-1 flex flex-col gap-5 animate-pop">
+
+      <!-- Module 1: Google Sheets Auto-Sync + CSV/JSON -->
+      <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-4">
+        <div class="flex items-start justify-between gap-2 flex-wrap">
+          <div>
+            <h2 class="text-base font-extrabold text-[#332E2E]">📊 1. Tự động đồng bộ Google Sheets</h2>
+            <p class="text-xs text-[#786D69] mt-0.5">
+              Chỉ cần dán link trang tính <strong>1 lần duy nhất</strong> (hoặc điền vào <code>DEFAULT_SHEET_URL</code> trong <code>app.js</code>). Từ lần sau, mở app là tự nạp ngay &amp; tự kiểm tra cập nhật mới ở nền.
+            </p>
+          </div>
+          <span id="badgeSheetStatus" class="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-matcha-50 text-matcha-600 shrink-0">Sẵn sàng</span>
+        </div>
+
+        <div class="flex flex-col gap-2.5 bg-[#FFFDF9] border border-[#F1ECE6] rounded-2xl p-4">
+          <label for="sheetUrlInput" class="text-xs font-extrabold text-[#4A4240]">Link Google Sheets (bật chia sẻ "Bất kỳ ai có liên kết đều xem được")</label>
+          <input id="sheetUrlInput" type="url" placeholder="https://docs.google.com/spreadsheets/d/..." class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2.5 text-xs bg-white focus:outline-none focus:border-[#FF8FA3]" />
+
+          <div class="flex items-center justify-between gap-2 flex-wrap pt-1">
+            <div class="flex items-center gap-3 text-xs font-bold text-[#4A4240] flex-wrap">
+              <span class="text-[#8C7F7A]">Các Sheet:</span>
+              <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N5" checked />N5</label>
+              <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N4" checked />N4</label>
+              <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N3" checked />N3</label>
+              <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N2" />N2</label>
+              <label class="flex items-center gap-1"><input type="checkbox" class="sheet-lvl accent-[#FB6F92]" value="N1" />N1</label>
+            </div>
+            <button id="btnSyncGoogleSheet" type="button" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#FF8FA3] to-[#FB6F92] text-white text-xs font-extrabold hover:opacity-95 active:scale-[0.98] transition">
+              🔄 Lưu link &amp; Đồng bộ ngay
+            </button>
+          </div>
+
+          <label class="flex items-center gap-2 text-xs font-bold text-[#5E524E] cursor-pointer pt-1">
+            <input id="autoSyncSheetCheck" type="checkbox" class="accent-[#FB6F92] w-4 h-4" checked />
+            <span>Tự động đồng bộ ngầm với Google Sheets mỗi khi mở app</span>
+          </label>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <label for="csvFileInput" class="py-2.5 px-3 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] text-xs font-extrabold text-center cursor-pointer transition flex items-center justify-center gap-1.5">
+            <span>📄 Nạp file .CSV (từ Sheet)</span>
+            <input id="csvFileInput" type="file" accept=".csv,text/csv" multiple class="hidden" />
+          </label>
+          <label for="jsonFileInput" class="py-2.5 px-3 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] text-xs font-extrabold text-center cursor-pointer transition flex items-center justify-center gap-1.5">
+            <span>📦 Nạp file .JSON</span>
+            <input id="jsonFileInput" type="file" accept=".json,application/json" class="hidden" />
+          </label>
+          <button id="btnLoadSampleData" type="button" class="py-2.5 px-3 rounded-2xl bg-peach-50 hover:bg-peach-100 text-peach-500 text-xs font-extrabold transition">
+            ✨ Khôi phục bộ mẫu Sheet
+          </button>
+        </div>
+      </div>
+
+      <!-- Module 2: ZEN-TTS Marine v1.3.0 -->
+      <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-3">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-extrabold text-[#332E2E]">🎧 2. Mô-đun Âm thanh ZEN-TTS Marine v1.3.0</h2>
+            <p id="zenDownloadDetail" class="text-xs text-[#786D69] mt-0.5">
+              Tải mô hình giọng nữ <strong>Marine v1.3.0</strong> (~41 MB, 44.1 kHz WebGPU/WASM) lưu vào Cache trình duyệt.
+            </p>
+          </div>
+          <span id="badgeZenTts" class="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-[#F6EFE8] text-[#786D69] shrink-0">Chưa nạp</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <button id="btnDownloadZenMarine" type="button" class="py-2.5 px-4 rounded-2xl bg-matcha-600 text-white text-xs font-extrabold hover:bg-matcha-500 transition">
+            ⬇️ Tải ZEN-TTS Marine v1.3.0
+          </button>
+          <label for="zenLocalFolderInput" class="py-2.5 px-4 rounded-2xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-[#4A4240] text-xs font-extrabold text-center cursor-pointer transition">
+            📂 Nạp từ thư mục đã tải sẵn (4 tệp)
+            <input id="zenLocalFolderInput" type="file" webkitdirectory directory multiple class="hidden" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Module 4: Dataset & SRS Stats + Backup -->
+      <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-4">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 class="text-base font-extrabold text-[#332E2E]">📈 Thống kê từ vựng &amp; Lịch ôn SRS</h3>
+            <p class="text-xs text-[#8C7F7A]">Lưu riêng lịch sử &amp; ngày hẹn ôn cho từng ID từ vựng (xuất file để chuyển thiết bị).</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button id="btnExportProgress" type="button" class="px-3 py-1.5 rounded-xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-xs font-extrabold text-[#4A4240] transition">📤 Xuất tiến độ</button>
+            <label for="importProgressInput" class="px-3 py-1.5 rounded-xl bg-[#F6EFE8] hover:bg-[#EDE3D8] text-xs font-extrabold text-[#4A4240] cursor-pointer transition">
+              📥 Nhập tiến độ
+              <input id="importProgressInput" type="file" accept=".json" class="hidden" />
+            </label>
+            <button id="btnResetProgress" type="button" class="px-3 py-1.5 rounded-xl bg-[#FFF4ED] hover:bg-[#FFEDD5] text-xs font-extrabold text-[#EA580C] transition">↺ Đặt lại tiến độ</button>
+          </div>
+        </div>
+
+        <div id="dataStatsGrid" class="grid grid-cols-2 sm:grid-cols-5 gap-2.5"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="max-w-4xl w-full mx-auto px-4 py-3 text-center text-[11px] font-semibold text-[#9C8F8A] border-t border-[#F1ECE6]/60">
+    音声合成：<a href="https://zenryokukikai.com" target="_blank" rel="noopener noreferrer" class="underline hover:text-[#FB6F92]">ZEN-TTS Marine</a> · Dữ liệu: Google Sheets (Auto-Sync) · SRS &amp; Plugin API: <code>window.KawaiiApp</code>
+  </footer>
+
+  <!-- ==================== TAP-TO-TRANSLATE BOTTOM SHEET ==================== -->
+  <div id="translateSheet" class="hidden fixed inset-x-0 bottom-0 z-40 p-3 sm:p-4 pointer-events-none flex justify-center">
+    <div class="pointer-events-auto w-full max-w-md bg-white border-2 border-[#FFD6DF] rounded-3xl shadow-2xl p-4 sm:p-5 animate-pop">
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div id="trCharBox" class="min-w-[52px] h-[52px] px-2.5 rounded-2xl bg-peach-50 text-peach-500 font-jp font-extrabold text-2xl flex items-center justify-center shrink-0">
+            食
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span id="trReading" class="font-jp text-sm font-extrabold text-peach-500"></span>
+              <span id="trHanViet" class="hidden text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-lg bg-[#F6EFE8] text-[#5E524E]"></span>
+              <span id="trLevel" class="hidden text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-peach-50 text-peach-500"></span>
+            </div>
+            <p id="trMeaning" class="text-sm sm:text-base font-extrabold text-[#2B2626] mt-0.5 leading-snug"></p>
+            <p id="trNote" class="text-[11px] font-semibold text-[#8C7F7A] mt-0.5"></p>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button id="trSpeakBtn" type="button" class="w-9 h-9 rounded-xl bg-peach-50 text-peach-500 hover:bg-peach-100 flex items-center justify-center transition active:scale-90" title="Phát âm chữ này">
+            🔊
+          </button>
+          <button id="trCloseBtn" type="button" class="w-9 h-9 rounded-xl bg-[#F6EFE8] text-[#5E524E] hover:bg-[#EDE3D8] flex items-center justify-center font-extrabold text-xs transition" aria-label="Đóng">
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toastContainer" role="status" aria-live="polite" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center gap-2"></div>
+
+  <!-- CONFIRM MODAL -->
+  <div id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-sm w-full p-6 shadow-xl border border-[#F1ECE6] animate-pop">
+      <h3 id="confirmTitle" class="text-base font-extrabold text-[#332E2E] mb-1.5">Xác nhận</h3>
+      <p id="confirmMessage" class="text-xs text-[#6E625E] mb-5 leading-relaxed"></p>
+      <div class="flex justify-end gap-2">
+        <button id="confirmCancelBtn" type="button" class="px-4 py-2 rounded-xl bg-[#F6EFE8] text-[#4A4240] text-xs font-extrabold">Hủy</button>
+        <button id="confirmOkBtn" type="button" class="px-4 py-2 rounded-xl bg-[#FB6F92] text-white text-xs font-extrabold">Đồng ý</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ZEN-TTS MARINE SETTINGS MODAL -->
+  <div id="audioModal" role="dialog" aria-modal="true" aria-labelledby="audioModalTitle" class="hidden fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-[#F1ECE6] animate-pop flex flex-col gap-3.5 my-auto">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 id="audioModalTitle" class="text-base font-extrabold text-[#332E2E]">🎧 Cài đặt ZEN-TTS Marine v1.3.0</h3>
+          <p class="text-[11px] text-[#8C7F7A]">44.1 kHz WebGPU / WASM · Giọng đọc tiếng Nhật chất lượng cao</p>
+        </div>
+        <button id="closeAudioModalBtn" type="button" aria-label="Đóng cài đặt âm thanh" class="w-8 h-8 rounded-xl bg-[#F6EFE8] text-[#4A4240] font-extrabold text-xs">✕</button>
+      </div>
+
+      <div class="rounded-2xl bg-[#FFFDF9] border border-[#F1ECE6] p-3.5 flex items-center justify-between gap-2">
+        <div>
+          <p class="text-xs font-extrabold text-[#332E2E]">Trạng thái Marine v1.3.0</p>
+          <p id="zenModalStatusText" class="text-[11px] text-[#8C7F7A]">Chưa nạp mô hình vào bộ nhớ</p>
+        </div>
+        <button id="btnModalDownloadZen" type="button" class="px-3 py-1.5 rounded-xl bg-matcha-600 text-white text-xs font-extrabold hover:bg-matcha-500 transition shrink-0">
+          ⬇️ Nạp Marine
+        </button>
+      </div>
+
+      <div class="flex flex-col gap-1.5">
+        <label for="kanaReadModeSelect" class="text-xs font-extrabold text-[#4A4240]">Chế độ đọc Bảng chữ cái (Kana)</label>
+        <select id="kanaReadModeSelect" class="w-full rounded-xl border border-[#E5DDD5] px-3 py-2 text-xs font-bold bg-[#FFFDF9] text-[#332E2E] outline-none focus:border-[#FF8FA3]">
+          <option value="CLEAR_MORA">🔊 Phát âm Âm tiết Chuẩn Rõ</option>
+          <option value="WITH_WORD">🌸 Đọc Âm tiết + Từ vựng mẫu</option>
+        </select>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div class="flex flex-col gap-1">
+          <div class="flex justify-between text-xs font-bold text-[#4A4240]">
+            <span>Tốc độ (Speed)</span>
+            <span id="zenSpeedVal">1.00x</span>
+          </div>
+          <input id="zenSpeedInput" type="range" min="0.6" max="1.4" step="0.05" value="1.0" class="accent-[#FB6F92]" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <div class="flex justify-between text-xs font-bold text-[#4A4240]">
+            <span>Cao độ (Pitch)</span>
+            <span id="zenPitchVal">0 st</span>
+          </div>
+          <input id="zenPitchInput" type="range" min="-6" max="12" step="1" value="0" class="accent-[#FB6F92]" />
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <div class="flex justify-between text-xs font-bold text-[#4A4240]">
+          <span>Cảm xúc tươi tắn (Happy %)</span>
+          <span id="zenHappyVal">60%</span>
+        </div>
+        <input id="zenHappyInput" type="range" min="0" max="100" step="10" value="60" class="accent-[#FB6F92]" />
+      </div>
+
+      <label class="flex items-center gap-2 text-xs font-bold text-[#5E524E] cursor-pointer">
+        <input id="fallbackWebSpeechCheck" type="checkbox" class="accent-[#FB6F92] w-4 h-4" checked />
+        <span>Tạm dùng giọng trình duyệt khi chưa nạp Marine</span>
+      </label>
+
+      <div class="flex justify-between items-center pt-1 gap-2">
+        <button id="testVoiceBtn" type="button" class="px-3.5 py-2 rounded-xl bg-peach-50 text-peach-500 text-xs font-extrabold hover:bg-peach-100 transition">
+          🔊 Nghe thử: こんにちは
+        </button>
+        <button id="saveAudioModalBtn" type="button" class="px-5 py-2 rounded-xl bg-[#FB6F92] text-white text-xs font-extrabold hover:opacity-95 transition">
+          Lưu cài đặt
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="cloudAccountModal" role="dialog" aria-modal="true" aria-label="Tài khoản và đồng bộ" class="hidden fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-white rounded-3xl p-5 shadow-xl max-h-[85dvh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-3"><h3 class="font-extrabold text-lg">Tài khoản & đồng bộ</h3><button id="closeCloudAccountBtn" type="button" aria-label="Đóng" class="px-3 py-1 rounded-xl bg-[#F6EFE8]">✕</button></div>
+      <p id="cloudAccountStatus" class="text-sm font-bold">Chưa đăng nhập</p>
+      <p id="cloudAccountDetail" class="text-xs text-[#786D69] mb-4">Đồng bộ tùy chọn với Supabase.</p>
+      <label class="block text-xs font-bold mb-1" for="cloudEmail">Email</label>
+      <input id="cloudEmail" type="email" autocomplete="email" class="w-full border rounded-xl p-3 mb-3" />
+      <label class="block text-xs font-bold mb-1" for="cloudPassword">Mật khẩu</label>
+      <input id="cloudPassword" type="password" autocomplete="current-password" class="w-full border rounded-xl p-3 mb-3" />
+      <div class="grid grid-cols-2 gap-2">
+        <button id="cloudSignInBtn" type="button" class="p-2 rounded-xl bg-[#FB6F92] text-white font-bold">Đăng nhập</button>
+        <button id="cloudSignUpBtn" type="button" class="p-2 rounded-xl bg-[#F6EFE8] font-bold">Đăng ký</button>
+        <button id="cloudSyncNowBtn" type="button" class="p-2 rounded-xl bg-[#EAF9F1] font-bold">Đồng bộ ngay</button>
+        <button id="cloudSignOutBtn" type="button" class="p-2 rounded-xl bg-[#F6EFE8] font-bold">Đăng xuất</button>
+      </div>
+    </div>
+  </div>
+  <!-- =========================================================================
+       CORE JAVASCRIPT ARCHITECTURE (window.KawaiiApp)
+       ========================================================================= -->
+  
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="database.js"></script>
+  <script src="preferences.js"></script>
+  <script src="progress.js"></script>
+  <script src="supabase-config.js"></script>
+  <script src="cloud-sync.js"></script>
+  <script src="study-session.js"></script>
+  <script src="srs.js"></script>
+  <script src="flashcard.js"></script>
+  <script src="lessons.js"></script>
+  <script src="sheets.js"></script>
+  <script src="quiz.js"></script>
+  <script src="weak-words.js"></script>
+  <script src="pronunciation.js"></script>
+  <script src="meaning.js"></script>
+  <script src="flashcard-interaction.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
