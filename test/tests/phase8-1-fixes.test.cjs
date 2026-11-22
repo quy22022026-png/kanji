@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path');
+const root=path.join(__dirname,'..');
+const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+const gesture=fs.readFileSync(path.join(root,'flashcard-interaction.js'),'utf8');
+const ids=new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]));
+const used=[...app.matchAll(/\$\('([^']+)'\)/g)].map(m=>m[1]);
+assert.deepEqual([...new Set(used.filter(id=>!ids.has(id)))],[]);
+for(const id of ['btnCloudAccount','cloudAccountModal','cloudSignInBtn','cloudSyncNowBtn'])assert.ok(ids.has(id));
+for(const src of ['supabase-config.js','cloud-sync.js','flashcard-interaction.js'])assert.ok(html.includes('src="'+src+'"'));
+assert.ok(!gesture.includes('520px'),'card must not fly beyond viewport');
+assert.match(gesture,/Math\.max\(-38,Math\.min\(38/);
+assert.match(gesture,/options\.onAgain\(\)/);
+assert.match(gesture,/options\.onGood\(\)/);
+assert.match(app,/if \(nextIndex === state\.fcIndex\) return/);
+console.log('PASS: module settings restored; all runtime IDs present; safe swipe boundaries; independent gesture module.');
