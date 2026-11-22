@@ -1,0 +1,81 @@
+{
+  "phase": 5,
+  "version": "3.4.0",
+  "runtime_syntax": {
+    "app.js": {
+      "pass": true,
+      "error": ""
+    },
+    "database.js": {
+      "pass": true,
+      "error": ""
+    },
+    "study-session.js": {
+      "pass": true,
+      "error": ""
+    },
+    "flashcard.js": {
+      "pass": true,
+      "error": ""
+    },
+    "quiz.js": {
+      "pass": true,
+      "error": ""
+    },
+    "weak-words.js": {
+      "pass": true,
+      "error": ""
+    },
+    "pronunciation.js": {
+      "pass": true,
+      "error": ""
+    },
+    "meaning.js": {
+      "pass": true,
+      "error": ""
+    }
+  },
+  "automated_tests": {
+    "phase2-srs.test.cjs": {
+      "pass": true,
+      "output": "PASS: Again 5 phút; Hard 1 ngày; Good 1-3-7-14-30; invalid rating bị từ chối.",
+      "error": ""
+    },
+    "phase3-session.test.cjs": {
+      "pass": true,
+      "output": "PASS: giới hạn 10 từ, xáo trộn duy nhất, Again requeue không giới hạn, khôi phục phiên, hoàn thành phiên, Flashcard gọi SRS Core.",
+      "error": ""
+    },
+    "phase4-quiz.test.cjs": {
+      "pass": true,
+      "output": "PASS: chọn 4 từ tối thiểu; đáp án hai chiều; phản hồi; hỏi lại một lần; lỗi lượt hỏi lại được tính; điểm tổng hợp.",
+      "error": ""
+    },
+    "phase4-weak-words.test.cjs": {
+      "pass": true,
+      "output": "PASS: cộng dồn lỗi hai nguồn; lỗi lặp tính đủ; yêu cầu đúng ở 2 phiên riêng mỗi nguồn; xóa trạng thái giữ lịch sử.",
+      "error": ""
+    },
+    "phase5-pronunciation.test.cjs": {
+      "pass": true,
+      "output": "PASS: ZEN-TTS; cache; Kana single; ZEN lỗi tự động fallback Web Speech; stop.",
+      "error": ""
+    },
+    "phase5-meaning.test.cjs": {
+      "pass": true,
+      "output": "PASS: greedy dictionary tokenization; punctuation; lookup popup; pronunciation callback; hide popup.",
+      "error": ""
+    }
+  },
+  "static_checks": {
+    "script_order_strict": true,
+    "app_api_exposes_pronunciation": true,
+    "tts_module_api": true,
+    "dict_module_api": true,
+    "separated_html_includes_both_modules": true,
+    "zip_export_includes_both_modules": true,
+    "version_3_4": true,
+    "old_audio_globals_removed": true
+  },
+  "safari_ios_device_test": "NOT TESTED"
+}
