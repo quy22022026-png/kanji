@@ -1,0 +1,13 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const app = fs.readFileSync(require('node:path').join(__dirname, '..', 'app.js'), 'utf8');
+const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
+assert.match(app, /async function verifyZenWorkerAssets\(/);
+assert.match(app, /Thiếu zen-worker\.js cùng thư mục với index\.html/);
+assert.match(app, /Thiếu thành phần ZEN-TTS/);
+const preflight = app.indexOf('await verifyZenWorkerAssets();');
+const download = app.indexOf('await Promise.all(urls.map(async url => {', preflight);
+assert.ok(preflight >= 0 && download > preflight, 'worker assets must be checked before model downloads');
+assert.match(html, /kiểm tra <code>zen-worker\.js<\/code>/);
+console.log('PASS: ZEN-TTS worker/dependency preflight runs before downloading the large model bundle.');
