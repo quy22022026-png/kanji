@@ -85,7 +85,6 @@
         limit,
         queue: [...selected],
         initialWordIds: [...selected],
-        earlyWordIds: (config.earlyWordIds || []).filter(id => selected.includes(id)),
         completedWordIds: [],
         firstAttemptWordIds: [],
         stats: { reviewed: 0, good: 0, again: 0, hard: 0, firstAttemptCorrect: 0 },
