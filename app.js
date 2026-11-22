@@ -141,6 +141,9 @@
           zenHappy: 60,
           fallbackWebSpeech: true
         },
+        lesson: null,
+        lessonBrowserOpen: false,
+        lessonLevel: 'N5',
         fcDeck: [],
         fcIndex: 0,
         fcFlipped: false,
@@ -1001,6 +1004,7 @@
         if (!preservePrefs) state.prefs.topic = 'ALL';
 
         rebuildTopicOptions();
+        state.lessonLevel = state.prefs.level;
         savePrefs();
         rebuildFlashcardDeck();
         initMatchingRound();
@@ -1030,7 +1034,93 @@
         state.prefs.topic = sel.value;
       }
 
+      const LESSON_PROGRESS_KEY = 'kawaii_lesson_good_ids_v1';
+      let lessonGood = safeGetLS(LESSON_PROGRESS_KEY, {}) || {};
+      function getLessons(level) {
+        const groups = new Map();
+        state.words.filter(w => w.level === level).forEach(w => {
+          const topic = w.topic || 'Chung';
+          if (!groups.has(topic)) groups.set(topic, []);
+          groups.get(topic).push(w);
+        });
+        const lessons = [];
+        for (const [topic, words] of groups) {
+          // Chia đều trong khoảng 8–12 khi khả thi; nhóm quá nhỏ giữ nguyên.
+          const count = Math.ceil(words.length / 12);
+          const base = Math.floor(words.length / count);
+          const extra = words.length % count;
+          let cursor = 0;
+          for (let i = 0; i < count; i++) {
+            const size = base + (i < extra ? 1 : 0);
+            const part = words.slice(cursor, cursor + size);
+            cursor += size;
+            lessons.push({ key: `${level}:${topic}:${i}`, level, topic, words: part });
+          }
+        }
+        return lessons;
+      }
+      function lessonCompletedCount(lesson) {
+        return lesson.words.filter(w => lessonGood[w.id]).length;
+      }
+      function renderLessonBrowser() {
+        const home = $('lessonHome');
+        home.classList.toggle('hidden', state.mode !== 'flashcard');
+        if (state.mode !== 'flashcard') return;
+        $('lessonBrowser').classList.toggle('hidden', !state.lessonBrowserOpen);
+        $('lessonActions').classList.toggle('hidden', !state.lesson);
+        $('flashcardView').classList.toggle('hidden', !state.lesson);
+        const levels = $('lessonLevels');
+        levels.replaceChildren();
+        LEVELS.filter(level => state.words.some(w => w.level === level)).forEach(level => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.textContent = level;
+          b.className = 'rounded-xl px-4 py-2 text-xs font-extrabold ' + (state.lessonLevel === level ? 'bg-[#FB6F92] text-white' : 'bg-[#F6EFE8]');
+          b.onclick = () => { state.lessonLevel = level; state.lesson = null; renderLessonBrowser(); };
+          levels.appendChild(b);
+        });
+        const list = $('lessonList'); list.replaceChildren();
+        getLessons(state.lessonLevel).forEach((lesson, i) => {
+          const completed = lessonCompletedCount(lesson);
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'text-left rounded-2xl border border-[#F1ECE6] p-3 bg-[#FFFDF9] hover:border-[#FB6F92]';
+          const title = document.createElement('strong'); title.className = 'block text-sm'; title.textContent = `Bài ${i + 1} · ${lesson.topic}`;
+          const desc = document.createElement('span'); desc.className = 'text-xs text-[#786D69]'; desc.textContent = `${completed}/${lesson.words.length} từ đã học`;
+          b.append(title, desc);
+          b.onclick = () => { state.lesson = lesson; renderLessonBrowser(); };
+          list.appendChild(b);
+        });
+        if (state.lesson) {
+          const done = lessonCompletedCount(state.lesson);
+          $('lessonSelectedInfo').textContent = `${state.lesson.level} · ${state.lesson.topic} · ${done}/${state.lesson.words.length} từ đã học`;
+          $('btnLessonContinue').textContent = `Học tiếp (${state.lesson.words.length - done} từ)`;
+          $('btnLessonContinue').disabled = done === state.lesson.words.length;
+          $('btnLessonContinue').classList.toggle('opacity-50', done === state.lesson.words.length);
+        }
+      }
+      function startLesson(restart) {
+        const lesson = state.lesson;
+        if (!lesson) return;
+        const words = restart ? lesson.words : lesson.words.filter(w => !lessonGood[w.id]);
+        if (!words.length) { showToast('Bài này đã hoàn thành. Hãy chọn Học lại toàn bộ.', 'info'); return; }
+        studySession?.clear();
+        state.prefs.level = lesson.level;
+        state.prefs.topic = lesson.topic;
+        state.prefs.fcFilter = 'SMART';
+        savePrefs();
+        rebuildTopicOptions();
+        state.fcDeck = flashcards.start(words, { limit: words.length });
+        state.fcIndex = 0; state.fcFlipped = false;
+        state.sessionStats = { reviewed: 0, good: 0, again: 0 };
+        renderAll();
+      }
+      $('btnBeginLessons').onclick = () => { state.lessonBrowserOpen = true; renderLessonBrowser(); };
+      $('btnLessonBack').onclick = () => { state.lesson = null; studySession?.clear(); renderAll(); };
+      $('btnLessonContinue').onclick = () => startLesson(false);
+      $('btnLessonRestart').onclick = () => startLesson(true);
+
       function rebuildFlashcardDeck(shuffle = false) {
+        if (state.lesson) return;
         cancelCardMove();
         const now = Date.now();
         const pool = getBasePool();
@@ -1045,9 +1135,8 @@
             state.fcDeck = [];
           } else {
             const dueList = pool.filter(w => isWordDue(w.id, now));
-            const earlyList = pool.filter(w => !isWordNew(w.id) && !isWordDue(w.id, now)).sort((a, b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt);
-            const candidates = [...dueList.sort((a,b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt), ...earlyList];
-            state.fcDeck = flashcards.start(candidates, { limit: getSessionWordLimit(candidates.length), earlyWordIds: earlyList.map(w => w.id) });
+            const newList = pool.filter(w => isWordNew(w.id));
+            state.fcDeck = flashcards.start(shuffle ? shuffled([...dueList, ...newList]) : [...dueList, ...newList], { limit: getSessionWordLimit(pool.length) });
           }
           state.fcIndex = 0;
           state.fcFlipped = false;
@@ -1197,9 +1286,9 @@
           } else {
             $('fcEmptyIcon').textContent = '✨';
             $('fcEmptyTitle').textContent = state.prefs.fcFilter === 'DUE' ? 'Chưa có từ nào đến hạn ôn!' : 'Không có từ nào trong mục này!';
-            $('fcEmptyDesc').textContent = 'Hãy học từ mới trong mục Học theo chủ đề trước khi ôn SMART.';
+            $('fcEmptyDesc').textContent = 'Bạn có thể chuyển sang "🎯 Phiên học" để học từ mới hoặc bấm "Xem tất cả từ".';
           }
-          $('btnStartNextSession').classList.toggle('hidden', !pool.some(w => !isWordNew(w.id)));
+          $('btnStartNextSession').classList.toggle('hidden', dueTotal + newTotal === 0);
           return;
         }
 
@@ -1303,15 +1392,14 @@
           renderFlashcard();
           return;
         }
-        if (studySession.getSnapshot()?.status === 'active' && !window.confirm('Thay phiên SMART đang học dở? Kết quả SRS đã lưu sẽ được giữ nguyên.')) return;
+        studySession.clear();
         state.prefs.fcFilter = 'SMART';
         savePrefs();
         const now = Date.now();
         const pool = getBasePool();
         const dueList = pool.filter(w => isWordDue(w.id, now));
-        const earlyList = pool.filter(w => !isWordNew(w.id) && !isWordDue(w.id, now)).sort((a,b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt);
-        const candidates = [...dueList.sort((a,b) => getWordStat(a.id).nextReviewAt - getWordStat(b.id).nextReviewAt), ...earlyList];
-        state.fcDeck = flashcards.start(candidates, { limit: getSessionWordLimit(candidates.length), earlyWordIds: earlyList.map(w => w.id) });
+        const newList = pool.filter(w => isWordNew(w.id));
+        state.fcDeck = flashcards.start([...dueList, ...newList], { limit: getSessionWordLimit(pool.length) });
         state.fcIndex = 0;
         state.fcFlipped = false;
         const snapshot = studySession.getSnapshot();
@@ -1321,7 +1409,7 @@
         renderHeader();
         renderFlashcard();
         if (!state.fcDeck.length) {
-          showToast('Chưa có từ đã học để ôn. Hãy bắt đầu với Học theo chủ đề.', 'info');
+          showToast('Hiện không có từ mới hoặc từ đến hạn để bắt đầu phiên.', 'info');
         }
       }
 
@@ -1373,6 +1461,12 @@
           console.error('[Kawaii Flashcard]', error);
           showToast('Không thể lưu kết quả học: ' + (error?.message || 'Lỗi dữ liệu'), 'error');
           return;
+        }
+
+        if (state.lesson && rating === 'good') {
+          lessonGood[word.id] = true;
+          safeSetLS(LESSON_PROGRESS_KEY, lessonGood);
+          renderLessonBrowser();
         }
 
         const activeSnapshot = studySession?.getSnapshot();
@@ -1631,7 +1725,8 @@
 
       function renderAll() {
         renderHeader();
-        $('flashcardView').classList.toggle('hidden', state.mode !== 'flashcard');
+        $('flashcardView').classList.toggle('hidden', state.mode !== 'flashcard' || !state.lesson);
+        renderLessonBrowser();
         $('matchingView').classList.toggle('hidden', state.mode !== 'matching');
         $('kanaView').classList.toggle('hidden', state.mode !== 'kana');
         $('dataView').classList.toggle('hidden', state.mode !== 'data');
@@ -1692,7 +1787,7 @@
         ? window.KawaiiFlashcardModule.create({
             session: studySession,
             getWord: (wordId) => state.wordMap.get(wordId) || null,
-            srs: { rateWord: rateWordSrs, getWordStat }
+            srs: { rateWord: rateWordSrs }
           })
         : null;
 
@@ -2194,75 +2289,6 @@
         });
       }
 
-      // Topic learning: independent local queue; one shared SRS record per word.
-      const topicLessons = window.KawaiiTopicLessonsModule?.create();
-      if (topicLessons) registerModule({
-        id: 'topic-lessons', label: 'Học theo chủ đề', icon: '📚',
-        mount: section => { section.innerHTML = ''; },
-        render: section => {
-          const allLessons = topicLessons.partition(state.words);
-          const activeId = topicLessons.snapshot().active?.lessonId;
-          const lessons = allLessons.filter(l => l.level === state.prefs.level || l.id === activeId);
-          const progress = topicLessons.snapshot();
-          const active = progress.active;
-          section.innerHTML = '';
-          const title = document.createElement('h2'); title.className = 'text-xl font-extrabold mb-3';
-          title.textContent = '📚 Học theo chủ đề · ' + state.prefs.level; section.appendChild(title);
-          if (active) {
-            const lesson = lessons.find(l => l.id === active.lessonId);
-            const box = document.createElement('div'); box.className = 'rounded-3xl bg-white border border-[#F1ECE6] p-5 mb-4 shadow-soft';
-            if (!active.queue.length) { topicLessons.clearActive(); renderAll(); return; }
-            const word = state.wordMap.get(active.queue[0]);
-            const heading = document.createElement('p'); heading.className = 'text-xs text-[#786D69] mb-3';
-            heading.textContent = `${active.lessonId} · ${active.initialWordIds.length - new Set(active.queue).size}/${active.initialWordIds.length} từ đã hoàn thành`;
-            box.appendChild(heading);
-            if (word) {
-              const front = document.createElement('p'); front.className = 'font-jp text-3xl font-bold text-center py-6';
-              front.textContent = word.kanji || word.kana; box.appendChild(front);
-              const reveal = document.createElement('button'); reveal.className = 'block mx-auto rounded-xl bg-[#F6EFE8] px-5 py-2 font-bold';
-              reveal.textContent = 'Lật thẻ xem nghĩa'; box.appendChild(reveal);
-              const back = document.createElement('div'); back.className = 'hidden text-center my-4';
-              const kana = document.createElement('p'); kana.textContent = word.kana || ''; kana.className = 'font-jp text-lg';
-              const meaning = document.createElement('p'); meaning.textContent = word.meaning || ''; meaning.className = 'font-bold mt-2';
-              back.append(kana, meaning); box.appendChild(back);
-              const actions = document.createElement('div'); actions.className = 'hidden flex justify-center gap-3 mt-4';
-              for (const [rating, label] of [['again','↻ Again'],['good','✓ Good']]) {
-                const button = document.createElement('button'); button.type = 'button'; button.className = 'rounded-xl px-6 py-3 font-extrabold ' + (rating === 'good' ? 'bg-[#D8F4E6]' : 'bg-[#FFE2E4]');
-                button.textContent = label;
-                button.onclick = () => { try {
-                  topicLessons.rate(word.id, rating, id => !isWordNew(id), rateWordSrs);
-                  cloudSync?.scheduleSync(getCloudBackupSnapshot()); renderAll();
-                } catch (err) { showToast(err.message, 'error'); } };
-                actions.appendChild(button);
-              }
-              box.appendChild(actions);
-              reveal.onclick = () => { back.classList.remove('hidden'); actions.classList.remove('hidden'); reveal.classList.add('hidden'); };
-            } else {
-              const missing = document.createElement('p'); missing.textContent = 'Từ này đã bị xóa khỏi dữ liệu. Có thể hủy phiên và bắt đầu lại.'; box.appendChild(missing);
-            }
-            const cancel = document.createElement('button'); cancel.className = 'text-xs text-[#786D69] underline mt-4'; cancel.textContent = 'Hủy bài đang dở';
-            cancel.onclick = () => { if (window.confirm('Hủy tiến độ bài đang dở? SRS đã ghi nhận vẫn giữ nguyên.')) { topicLessons.clearActive(); renderAll(); } };
-            box.appendChild(cancel); section.appendChild(box);
-          }
-          const grid = document.createElement('div'); grid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-3';
-          for (const lesson of lessons) {
-            const done = progress.completed[lesson.id];
-            const status = done ? done.fingerprint === lesson.fingerprint ? 'Đã hoàn thành' : 'Cần học lại' : active?.lessonId === lesson.id ? 'Đang học' : 'Chưa học';
-            const btn = document.createElement('button'); btn.type = 'button';
-            btn.className = 'text-left bg-white rounded-2xl p-4 border border-[#F1ECE6] shadow-soft';
-            const heading = document.createElement('p'); heading.className = 'font-extrabold'; heading.textContent = lesson.topic + ' · Bài ' + lesson.number;
-            const info = document.createElement('p'); info.className = 'text-xs text-[#786D69] mt-1'; info.textContent = `${lesson.wordIds.length} từ · ${status}`;
-            btn.append(heading, info);
-            btn.onclick = () => {
-              if (active?.lessonId === lesson.id && active.fingerprint === lesson.fingerprint) return;
-              if (topicLessons.snapshot().active && !window.confirm('Thay thế bài học đang dở? Các kết quả SRS đã lưu vẫn được giữ nguyên.')) return;
-              topicLessons.start(lesson, id => !isWordNew(id)); renderAll();
-            }; grid.appendChild(btn);
-          }
-          section.appendChild(grid);
-        }
-      });
-
       if (quiz) {
         registerModule({
           id: 'quiz', label: 'Trắc nghiệm', icon: '📝',
@@ -2678,247 +2704,14 @@
       $('btnResetProgress').onclick = async () => {
         if (!(await showConfirm('Đặt lại tiến độ?', 'Toàn bộ lịch sử học, lịch nhắc ôn SRS từng từ và chuỗi đúng sẽ về 0.'))) return;
         state.progress = { wordStats: {}, streak: 0, bestStreak: 0, totalPairsMatched: 0 };
+        lessonGood = {};
+        safeSetLS(LESSON_PROGRESS_KEY, lessonGood);
+        studySession?.clear();
         saveProgress();
         rebuildFlashcardDeck();
         initMatchingRound();
         renderAll();
         showToast('Đã đặt lại tiến độ!');
-      };
-
-      // =======================================================================
-      // 14. NÉN ZIP THUẦN JS (KHÔNG CẦN THƯ VIỆN NGOÀI) & XUẤT FILE TÁCH RỜI
-      // =======================================================================
-      const CRC32_TABLE = (() => {
-        const tbl = new Uint32Array(256);
-        for (let i = 0; i < 256; i++) {
-          let c = i;
-          for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-          tbl[i] = c >>> 0;
-        }
-        return tbl;
-      })();
-
-      function calcCrc32(bytes) {
-        let crc = 0xFFFFFFFF;
-        for (let i = 0; i < bytes.length; i++) crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
-        return (crc ^ 0xFFFFFFFF) >>> 0;
-      }
-
-      function buildZipBlob(files) {
-        const encoder = new TextEncoder();
-        const localParts = [];
-        const centralParts = [];
-        let offset = 0;
-
-        for (const file of files) {
-          const nameBytes = encoder.encode(file.name);
-          const dataBytes = encoder.encode(file.content);
-          const crc = calcCrc32(dataBytes);
-
-          const localHeader = new Uint8Array(30 + nameBytes.length);
-          const lv = new DataView(localHeader.buffer);
-          lv.setUint32(0, 0x04034b50, true);
-          lv.setUint16(4, 20, true);
-          lv.setUint16(6, 0x0800, true);
-          lv.setUint16(8, 0, true);
-          lv.setUint32(14, crc, true);
-          lv.setUint32(18, dataBytes.length, true);
-          lv.setUint32(22, dataBytes.length, true);
-          lv.setUint16(26, nameBytes.length, true);
-          localHeader.set(nameBytes, 30);
-
-          localParts.push(localHeader, dataBytes);
-
-          const cdHeader = new Uint8Array(46 + nameBytes.length);
-          const cv = new DataView(cdHeader.buffer);
-          cv.setUint32(0, 0x02014b50, true);
-          cv.setUint16(4, 20, true);
-          cv.setUint16(6, 20, true);
-          cv.setUint16(8, 0x0800, true);
-          cv.setUint16(10, 0, true);
-          cv.setUint32(16, crc, true);
-          cv.setUint32(20, dataBytes.length, true);
-          cv.setUint32(24, dataBytes.length, true);
-          cv.setUint16(28, nameBytes.length, true);
-          cv.setUint32(42, offset, true);
-          cdHeader.set(nameBytes, 46);
-          centralParts.push(cdHeader);
-
-          offset += localHeader.length + dataBytes.length;
-        }
-
-        const cdSize = centralParts.reduce((sum, p) => sum + p.length, 0);
-        const eocd = new Uint8Array(22);
-        const ev = new DataView(eocd.buffer);
-        ev.setUint32(0, 0x06054b50, true);
-        ev.setUint16(8, files.length, true);
-        ev.setUint16(10, files.length, true);
-        ev.setUint32(12, cdSize, true);
-        ev.setUint32(16, offset, true);
-
-        return new Blob([...localParts, ...centralParts, eocd], { type: 'application/zip' });
-      }
-
-      function downloadBlob(filename, blob) {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1500);
-      }
-
-      function buildSeparatedHtml() {
-        const clone = CLEAN_HTML_CLONE.cloneNode(true);
-
-        clone.querySelectorAll('style').forEach(styleEl => styleEl.remove());
-        if (!clone.querySelector('link[rel="stylesheet"][href="styles.css"]')) {
-          const link = document.createElement('link');
-          link.rel = 'stylesheet';
-          link.href = 'styles.css';
-          clone.querySelector('head')?.appendChild(link);
-        }
-
-        clone.querySelectorAll('#appCoreScript').forEach(script => script.remove());
-        const body = clone.querySelector('body');
-        if (body) {
-          body.querySelectorAll('script[src="topic-lessons.js"], script[src="database.js"], script[src="supabase-config.js"], script[src="cloud-sync.js"], script[src="study-session.js"], script[src="flashcard.js"], script[src="quiz.js"], script[src="weak-words.js"], script[src="pronunciation.js"], script[src="meaning.js"], script[src="app.js"]').forEach(script => script.remove());
-          const databaseScript = document.createElement('script');
-          databaseScript.src = 'database.js';
-          const configScript = document.createElement('script');
-          configScript.src = 'supabase-config.js';
-          const cloudScript = document.createElement('script');
-          cloudScript.src = 'cloud-sync.js';
-          const sessionScript = document.createElement('script');
-          sessionScript.src = 'study-session.js';
-          const flashcardScript = document.createElement('script');
-          flashcardScript.src = 'flashcard.js';
-          const topicScript = document.createElement('script');
-          topicScript.src = 'topic-lessons.js';
-          const quizScript = document.createElement('script');
-          quizScript.src = 'quiz.js';
-          const weakWordsScript = document.createElement('script');
-          weakWordsScript.src = 'weak-words.js';
-          const pronunciationScript = document.createElement('script');
-          pronunciationScript.src = 'pronunciation.js';
-          const meaningScript = document.createElement('script');
-          meaningScript.src = 'meaning.js';
-          const appScript = document.createElement('script');
-          appScript.src = 'app.js';
-          body.append(databaseScript, configScript, cloudScript, sessionScript, flashcardScript, topicScript, quizScript, weakWordsScript, pronunciationScript, meaningScript, appScript);
-        }
-
-        return '<!DOCTYPE html>\\n' + clone.outerHTML;
-      }
-
-      async function readProjectAsset(path) {
-        const response = await fetch(path, { cache: 'no-store' });
-        if (!response.ok) throw new Error('Không đọc được ' + path);
-        return response.text();
-      }
-
-      const PLUGIN_SAMPLE_CODE = `/**
- * File mẫu mở rộng tính năng cho Kawaii JLPT.
- * Thêm <script src="plugin-sample.js"></script> ngay dưới <script src="app.js"></script> trong index.html.
- */
-(() => {
-  if (!window.KawaiiApp) return;
-
-  window.KawaiiApp.registerModule({
-    id: 'due_list',
-    label: 'Lịch ôn',
-    icon: '📅',
-    mount(container) {
-      container.innerHTML = \`
-        <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-3">
-          <h2 class="text-base font-extrabold text-[#332E2E]">📅 Danh sách từ cần ôn hôm nay</h2>
-          <div id="pluginDueList" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
-        </div>
-      \`;
-    },
-    render(container, app) {
-      const list = container.querySelector('#pluginDueList');
-      const due = app.getBasePool().filter(w => app.srs.isWordDue(w.id)).slice(0, 12);
-      if (!due.length) {
-        list.innerHTML = '<p class="text-xs text-[#8C7F7A]">Không có từ nào đến hạn ôn trong mục này 🎉</p>';
-        return;
-      }
-      list.innerHTML = due.map(w => \`
-        <button type="button" data-speak="\${w.kana || w.kanji}" class="text-left p-3 rounded-2xl bg-[#FFFDF9] border border-[#F1ECE6] hover:border-[#FF8FA3] transition">
-          <div class="font-jp font-extrabold text-base text-[#2B2626]">\${w.kanji || w.kana}</div>
-          <div class="text-xs text-[#786D69]">\${w.meaning}</div>
-        </button>
-      \`).join('');
-      list.querySelectorAll('button[data-speak]').forEach(btn => {
-        btn.onclick = () => app.tts.speak(btn.dataset.speak);
-      });
-    }
-  });
-})();
-`;
-
-      if ($('btnExportZip')) {
-        $('btnExportZip').onclick = async () => {
-          try {
-            const [cssContent, jsContent, dbContent, configContent, cloudContent, schemaContent, sessionContent, flashcardContent, quizContent, weakWordsContent, pronunciationContent, meaningContent] = await Promise.all([
-              readProjectAsset('styles.css'),
-              readProjectAsset('app.js'),
-              readProjectAsset('database.js'),
-              readProjectAsset('supabase-config.js'),
-              readProjectAsset('cloud-sync.js'),
-              readProjectAsset('supabase-schema.sql'),
-              readProjectAsset('study-session.js'),
-              readProjectAsset('flashcard.js'),
-              readProjectAsset('quiz.js'),
-              readProjectAsset('weak-words.js'),
-              readProjectAsset('pronunciation.js'),
-              readProjectAsset('meaning.js')
-            ]);
-            const zipBlob = buildZipBlob([
-              { name: 'index.html', content: buildSeparatedHtml() },
-              { name: 'styles.css', content: cssContent },
-              { name: 'database.js', content: dbContent },
-              { name: 'supabase-config.js', content: configContent },
-              { name: 'cloud-sync.js', content: cloudContent },
-              { name: 'supabase-schema.sql', content: schemaContent },
-              { name: 'study-session.js', content: sessionContent },
-              { name: 'flashcard.js', content: flashcardContent },
-              { name: 'quiz.js', content: quizContent },
-              { name: 'weak-words.js', content: weakWordsContent },
-              { name: 'pronunciation.js', content: pronunciationContent },
-              { name: 'meaning.js', content: meaningContent },
-              { name: 'app.js', content: jsContent },
-              { name: 'plugin-sample.js', content: PLUGIN_SAMPLE_CODE }
-            ]);
-            downloadBlob('kawaii-jlpt.zip', zipBlob);
-            showToast('Đã nén & tải về kawaii-jlpt.zip!', 'success');
-          } catch {
-            showToast('Không thể đóng gói. Hãy mở ứng dụng qua máy chủ web.', 'error');
-          }
-        };
-      }
-      if ($('btnExportHtml')) $('btnExportHtml').onclick = () => {
-        downloadBlob('index.html', new Blob([buildSeparatedHtml()], { type: 'text/html;charset=utf-8' }));
-        showToast('Đã tải index.html!', 'success');
-      };
-      if ($('btnExportCss')) $('btnExportCss').onclick = async () => {
-        try {
-          const content = await readProjectAsset('styles.css');
-          downloadBlob('styles.css', new Blob([content], { type: 'text/css;charset=utf-8' }));
-          showToast('Đã tải styles.css!', 'success');
-        } catch { showToast('Không đọc được styles.css.', 'error'); }
-      };
-      if ($('btnExportJs')) $('btnExportJs').onclick = async () => {
-        try {
-          const content = await readProjectAsset('app.js');
-          downloadBlob('app.js', new Blob([content], { type: 'application/javascript;charset=utf-8' }));
-          showToast('Đã tải app.js!', 'success');
-        } catch { showToast('Không đọc được app.js.', 'error'); }
-      };
-      if ($('btnExportPluginSample')) $('btnExportPluginSample').onclick = () => {
-        downloadBlob('plugin-sample.js', new Blob([PLUGIN_SAMPLE_CODE], { type: 'application/javascript;charset=utf-8' }));
-        showToast('Đã tải plugin-sample.js!', 'success');
       };
 
       // =======================================================================
