@@ -380,7 +380,9 @@
           error: 'bg-[#E11D48] text-white'
         };
         const el = document.createElement('div');
-        el.className = `${colors[type] || colors.info} px-4 py-2.5 rounded-2xl text-xs font-extrabold shadow-lg animate-pop max-w-[90vw] text-center`;
+        el.className = `${colors[type] || colors.info} px-4 py-2.5 rounded-2xl text-xs font-extrabold shadow-lg animate-pop max-w-[90vw] text-center pointer-events-auto cursor-pointer`;
+        el.title = 'Chạm để đóng thông báo';
+        el.addEventListener('click', () => el.remove());
         el.textContent = message;
         const container = $('toastContainer');
         if (container.children.length >= 3) container.firstElementChild.remove();
@@ -686,7 +688,7 @@
           } catch (err) {
             updateZenStatusUI(!!zenInstance, zenInstance ? 'Đang dùng bản trước' : 'Chưa nạp');
             if (detail) detail.textContent = `Không nạp được Marine: ${err.message}`;
-            if (autoDownload || localResponses) showToast('Lỗi nạp Marine: ' + err.message, 'error');
+            if (autoDownload || localResponses) showToast('Marine chưa khả dụng. Có thể dùng giọng Nhật của iPhone.', 'info');
             return null;
           } finally {
             buttons.forEach(b => { if (b) b.disabled = false; });
@@ -825,7 +827,18 @@
       }
 
       // User-curated tap dictionary. Independent of the JLPT study dataset.
-      const TAP_DICT_CACHE_KEY = 'tap_dictionary_v1';
+      const TAP_DICT_CACHE_KEY = 'tap_dictionary_v2';
+      let tapDictionaryStatus = 'Chưa đồng bộ từ điển';
+      function setTapDictionaryStatus(message) {
+        tapDictionaryStatus = message;
+        const el = $('badgeTapDictionaryStatus');
+        if (el) el.textContent = message;
+      }
+      function clearTapDictionary(message) {
+        tapDictionary = new Map();
+        tapVariants = new Map();
+        setTapDictionaryStatus(message);
+      }
       let tapDictionary = new Map();
       let tapVariants = new Map();
       const normalizeHeader = value => String(value || '').trim().toLowerCase().normalize('NFC');
@@ -867,7 +880,11 @@
       async function restoreTapDictionary() {
         try {
           const cached = await window.KawaiiDatabase.getAppState(TAP_DICT_CACHE_KEY);
-          if (cached && Array.isArray(cached.entries)) applyTapDictionary(cached);
+          const currentId = extractGoogleSheetId($('sheetUrlInput')?.value || safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL));
+          if (cached && cached.sheetId === currentId && Array.isArray(cached.entries)) {
+            applyTapDictionary(cached);
+            setTapDictionaryStatus(`Từ điển đã lưu: ${tapDictionary.size} từ`);
+          }
         } catch (_) { /* Cached dictionary is optional. */ }
       }
       async function fetchTapDictionary(sheetId) {
@@ -889,13 +906,17 @@
         const [dictRows, variantRows] = await Promise.all([
           fetchTab(['Tu dien', 'Từ điển']), fetchTab(['Bien the', 'Biến thể'])
         ]);
-        if (!dictRows) return false; // Preserve the last valid cached dictionary.
+        if (!dictRows) {
+          setTapDictionaryStatus('Không đọc được tab Từ điển · dùng bản lưu nếu có');
+          return false;
+        }
         const payload = {
           entries: parseTapDictionary(dictRows),
           variants: variantRows ? parseTapVariants(variantRows) : [],
           sheetId, updatedAt: Date.now()
         };
         applyTapDictionary(payload);
+        setTapDictionaryStatus(`Từ điển: ${tapDictionary.size} từ · ${tapVariants.size} biến thể`);
         try { await window.KawaiiDatabase.saveAppState(TAP_DICT_CACHE_KEY, payload); } catch (_) {}
         return true;
       }
@@ -910,6 +931,11 @@
         const selectedLevels = Array.from(document.querySelectorAll('.sheet-lvl:checked')).map(el => el.value);
         const levelsToFetch = selectedLevels.length ? selectedLevels : (state.prefs.sheetLevels || ['N5', 'N4', 'N3']);
 
+        const previousSheetId = extractGoogleSheetId(safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL));
+        if (previousSheetId !== sheetId) {
+          clearTapDictionary('Đã đổi Sheet · chờ đồng bộ từ điển');
+          try { await window.KawaiiDatabase.saveAppState(TAP_DICT_CACHE_KEY, { sheetId, entries: [], variants: [] }); } catch (_) {}
+        }
         safeSetLS(STORAGE_SHEET_KEY, rawUrl);
         state.prefs.sheetLevels = levelsToFetch;
         savePrefs();
@@ -938,7 +964,8 @@
 
           // Dictionary failure must never block vocabulary synchronization.
           await fetchTapDictionary(sheetId).catch(error => {
-            console.warn('Tap dictionary sync failed; keeping cached copy:', error);
+            setTapDictionaryStatus('Lỗi đồng bộ từ điển · dùng dữ liệu đã lưu nếu có');
+            console.warn('Tap dictionary sync failed:', error);
           });
 
           if (!allWords.length) {
@@ -3242,7 +3269,10 @@
           syncFromGoogleSheets({ silent: true });
         }
 
-        initZenTtsFromCacheOrNetwork(false);
+        // Marine chỉ nạp khi người dùng chủ động yêu cầu; giọng Safari vẫn dùng được.
+        if (typeof window.speechSynthesis !== 'undefined') {
+          updateZenStatusUI(false, 'Giọng iPhone (dự phòng)');
+        }
         events.emit('app:ready', {
           version: window.KawaiiApp?.version || '3.1.0',
           wordCount: state.words.length,
