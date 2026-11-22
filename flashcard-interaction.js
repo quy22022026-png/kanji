@@ -43,7 +43,7 @@
       }
     };
     card.addEventListener('pointerup',end);
-    card.addEventListener('pointercancel',()=>{tracking=false;reset();suppressClick=true;});
+    card.addEventListener('pointercancel',()=>{tracking=false;horizontal=false;reset();suppressClick=false;});
     card.addEventListener('click',e=>{
       if(e.target.closest('button,.tap-token,a,input,select'))return;
       if(suppressClick){suppressClick=false;return;}
