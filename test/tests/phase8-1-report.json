@@ -1,0 +1,20 @@
+{
+  "version": "3.7.1",
+  "tests": {
+    "phase2-srs.test.cjs": true,
+    "phase3-session.test.cjs": true,
+    "phase4-quiz.test.cjs": true,
+    "phase4-weak-words.test.cjs": true,
+    "phase5-meaning.test.cjs": true,
+    "phase5-pronunciation.test.cjs": true,
+    "phase6-cloud-sync.test.cjs": true,
+    "phase6-database-schema.test.cjs": true,
+    "phase7-account-isolation.test.cjs": true,
+    "phase7-offline-sync.test.cjs": true,
+    "phase7-supabase-schema.test.cjs": true,
+    "phase8-1-fixes.test.cjs": true,
+    "phase8-flashcard-ui.test.cjs": true
+  },
+  "missing_runtime_dom_ids": [],
+  "ios_device_test": "not performed"
+}
