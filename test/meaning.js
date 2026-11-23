@@ -378,6 +378,14 @@
         }
       });
 
+      // Japanese uses あなた in ordinary writing even when a variant tab points to 貴方.
+      // Keep either supplied meaning available for both spellings, including partial caches.
+      const pronoun = [index.get('あなた'),index.get('貴方')].find(entry => entry?.meaning && !entry.fragment)
+        || {reading:'あなた',meaning:'Bạn, anh, chị (đại từ ngôi thứ hai)',pos:'Đại từ',level:'N5'};
+      for (const text of ['あなた','貴方']) {
+        const entry = index.get(text);
+        if (!entry?.meaning || entry.fragment) index.set(text,{...pronoun,text});
+      }
       for (const [text,reading,meaning] of FIXED_EXPRESSIONS) {
         if (!index.has(text)) index.set(text,{text,reading,meaning,note:'Lời nói cố định'});
       }
