@@ -47,6 +47,7 @@
           return null;
         }
         active = parsed;
+        if (active.currentWordId && !active.queue.includes(active.currentWordId)) active.currentWordId = active.queue[0] || null;
         if (!Array.isArray(active.firstAttemptWordIds)) active.firstAttemptWordIds = [];
         if (typeof active.stats.firstAttemptCorrect !== 'number') active.stats.firstAttemptCorrect = 0;
         return getSnapshot();
@@ -76,6 +77,7 @@
         seen.add(word.id);
         unique.push(String(word.id));
       }
+      const before = active;
       const selected = shuffle(unique).slice(0, limit);
       const now = Date.now();
       active = {
@@ -84,6 +86,8 @@
         status: selected.length ? 'active' : 'completed',
         limit,
         queue: [...selected],
+        currentWordId: selected[0] || null,
+        context: config.context === 'standalone' ? 'standalone' : 'lesson',
         initialWordIds: [...selected],
         completedWordIds: [],
         firstAttemptWordIds: [],
@@ -92,7 +96,7 @@
         completedAt: selected.length ? null : now,
         updatedAt: now
       };
-      persist();
+      try {persist();} catch(error) {active = before;throw error;}
       return getSnapshot();
     }
 
@@ -104,6 +108,12 @@
       return active && active.status === 'active' ? [...active.queue] : [];
     }
 
+    function canRecord(wordId, rating) {
+      return !!(active && active.status === 'active' &&
+        ['again', 'hard', 'good'].includes(rating) &&
+        active.queue.includes(wordId));
+    }
+
     function record(wordId, rating) {
       if (!active || active.status !== 'active') {
         throw new Error('Không có phiên học đang hoạt động.');
@@ -111,32 +121,60 @@
       if (!['again', 'hard', 'good'].includes(rating)) {
         throw new TypeError('Đánh giá phiên học không hợp lệ.');
       }
-      const expected = active.queue[0];
-      if (expected !== wordId) {
-        throw new Error('Từ được đánh giá không khớp với đầu hàng đợi phiên học.');
+      // Navigation may select any word still in the active queue.
+      const index = active.queue.indexOf(wordId);
+      if (index < 0) {
+        throw new Error('Từ được đánh giá không nằm trong hàng đợi phiên học.');
       }
+      const before = getSnapshot();
+      try {
+        active.queue.splice(index, 1);
+        active.stats.reviewed += 1;
+        active.stats[rating] += 1;
+        const isFirstAttempt = !active.firstAttemptWordIds.includes(wordId);
+        if (isFirstAttempt) {
+          active.firstAttemptWordIds.push(wordId);
+          if (rating === 'good' || rating === 'hard') active.stats.firstAttemptCorrect += 1;
+        }
 
-      active.queue.shift();
-      active.stats.reviewed += 1;
-      active.stats[rating] += 1;
-      const isFirstAttempt = !active.firstAttemptWordIds.includes(wordId);
-      if (isFirstAttempt) {
-        active.firstAttemptWordIds.push(wordId);
-        if (rating === 'good' || rating === 'hard') active.stats.firstAttemptCorrect += 1;
-      }
+        if (rating === 'again') {
+          // Requeue a failed card at the end, regardless of its visible position.
+          active.queue.push(wordId);
+        } else if (!active.completedWordIds.includes(wordId)) {
+          active.completedWordIds.push(wordId);
+        }
 
-      if (rating === 'again') {
-        // Không giới hạn số lần ôn lại: đưa từ xuống cuối hàng đợi.
-        active.queue.push(wordId);
-      } else if (!active.completedWordIds.includes(wordId)) {
-        active.completedWordIds.push(wordId);
+        active.currentWordId = active.queue[0] || null;
+        if (active.queue.length === 0) {
+          active.status = 'completed';
+          active.completedAt = Date.now();
+        }
+        persist();
+      } catch (error) {
+        active = before;
+        throw error;
       }
+      return getSnapshot();
+    }
 
-      if (active.queue.length === 0) {
-        active.status = 'completed';
-        active.completedAt = Date.now();
+    // Public rollback point used only when the downstream SRS commit fails.
+    // The previous session must have the same identity; never restore another session.
+    function restoreSnapshot(snapshot) {
+      if (!snapshot || snapshot.version !== 1 || !snapshot.id ||
+          !Array.isArray(snapshot.queue) || !Array.isArray(snapshot.initialWordIds) ||
+          !Array.isArray(snapshot.completedWordIds) || !snapshot.stats ||
+          !['active', 'completed'].includes(snapshot.status) ||
+          (active && active.id !== snapshot.id)) {
+        throw new TypeError('Snapshot phiên học không hợp lệ.');
       }
-      persist();
+      const current = active;
+      active = JSON.parse(JSON.stringify(snapshot));
+      try {
+        persist();
+      } catch (error) {
+        active = current;
+        throw error;
+      }
       return getSnapshot();
     }
 
@@ -145,24 +183,42 @@
       const current = new Set(active.queue);
       const proposed = wordIds.map(String).filter((id, index, arr) => current.has(id) && arr.indexOf(id) === index);
       if (proposed.length !== current.size) return false;
+      const before = active.queue;
       active.queue = proposed;
-      persist();
+      try {persist();} catch(error) {active.queue = before;throw error;}
       return true;
     }
 
+    function setCurrentWord(wordId) {
+      if (!active || active.status !== 'active' || !active.queue.includes(wordId)) return false;
+      const before = active.currentWordId;
+      active.currentWordId = wordId;
+      try {persist();} catch(error) {active.currentWordId = before;throw error;}
+      return true;
+    }
     function clear() {
+      storage.removeItem(storageKey);
       active = null;
-      try { storage.removeItem(storageKey); } catch (error) {
-        console.warn('[StudySession] Không thể xóa phiên đã hoàn thành:', error);
-      }
+    }
+
+    async function restorePersistence() {
+      try {await options.database?.restoreMirroredStorage('study-session');}
+      catch(error) {console.warn('[study-session] Dùng bản LocalStorage:',error.message);}
+      load();
+      try {await options.database?.mirrorLocalJSON(storageKey,`study-session:${storageKey}`);}
+      catch(error) {console.warn('[study-session] Chưa mirror được IndexedDB:',error.message);}
+      return getSnapshot();
     }
 
     return Object.freeze({
-      start,
+      restorePersistence,
+      start, setCurrentWord,
       load,
       getSnapshot,
       getQueue,
       record,
+      canRecord,
+      restoreSnapshot,
       reorder,
       clear
     });
