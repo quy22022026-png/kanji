@@ -76,7 +76,7 @@
     }
 
     function renderInteractiveExample(containerEl, sentence, parentWord) {
-      if (meaning) meaning.renderSentence(containerEl, sentence, parentWord);
+      if (meaning) meaning.renderSentence(containerEl, sentence, parentWord, {analyze: state.fcFlipped});
     }
 
     function renderLessonBrowser() {
@@ -316,7 +316,11 @@
       hideTranslateSheet();
       state.fcFlipped = !state.fcFlipped;
       $('fcInner').classList.toggle('is-flipped', state.fcFlipped);
-      if (state.fcFlipped) speakWord(state.fcDeck[state.fcIndex]);
+      if (state.fcFlipped) {
+        const word = state.fcDeck[state.fcIndex];
+        if (word.example?.ja) renderInteractiveExample($('fcExJa'), word.example.ja, word);
+        speakWord(word);
+      }
     }
 
     function cancelCardMove() {
