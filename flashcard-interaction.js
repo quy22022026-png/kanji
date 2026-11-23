@@ -2,6 +2,8 @@
   'use strict';
   function attach(card, options) {
     if (!card) throw new Error('Missing flashcard element');
+    const cleanup = [];
+    const listen = (event,handler) => {card.addEventListener(event,handler);cleanup.push(() => card.removeEventListener(event,handler));};
     let startX=0, startY=0, startAt=0, tracking=false, horizontal=false, locked=false, suppressClick=false;
     let activePointer=null;
     const reset=()=>{
@@ -10,13 +12,13 @@
       card.style.transition='';
       card.style.opacity='';
     };
-    card.addEventListener('pointerdown', e=>{
+    listen('pointerdown', e=>{
       if (locked || options.isBusy() || e.button!==0 || e.target.closest('button,.tap-token,a,input,select')) return;
       tracking=true; horizontal=false; activePointer=e.pointerId;
       startX=e.clientX; startY=e.clientY; startAt=performance.now();
       card.style.transition='none';
     });
-    card.addEventListener('pointermove', e=>{
+    listen('pointermove', e=>{
       if(!tracking || e.pointerId!==activePointer) return;
       const dx=e.clientX-startX,dy=e.clientY-startY;
       if(!horizontal && Math.abs(dy)>14 && Math.abs(dy)>Math.abs(dx)){tracking=false;reset();return;}
@@ -42,14 +44,14 @@
         finally { locked=false; }
       }
     };
-    card.addEventListener('pointerup',end);
-    card.addEventListener('pointercancel',()=>{tracking=false;horizontal=false;reset();suppressClick=false;});
-    card.addEventListener('click',e=>{
+    listen('pointerup',end);
+    listen('pointercancel',()=>{tracking=false;horizontal=false;reset();suppressClick=false;});
+    listen('click',e=>{
       if(e.target.closest('button,.tap-token,a,input,select'))return;
       if(suppressClick){suppressClick=false;return;}
       if(!options.isBusy())options.onFlip();
     });
-    return {reset};
+    return {reset,destroy() {cleanup.forEach(fn => fn());reset();}};
   }
   global.KawaiiFlashcardInteraction=Object.freeze({attach});
 })(window);
