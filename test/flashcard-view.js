@@ -98,21 +98,34 @@
       const list = $('lessonList'); list.replaceChildren();
       (lessons?.getLessons(state.words, state.lessonLevel) || []).forEach((lesson, i) => {
         const completed = lessons.getCompletedCount(lesson);
+        const isComplete = completed === lesson.words.length;
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'text-left rounded-2xl border border-[#F1ECE6] p-3 bg-[#FFFDF9] hover:border-[#FB6F92]';
         const title = document.createElement('strong'); title.className = 'block text-sm'; title.textContent = `Bài ${i + 1} · ${lesson.topic}`;
         const desc = document.createElement('span'); desc.className = 'text-xs text-[#786D69]'; desc.textContent = `${completed}/${lesson.words.length} từ đã học`;
         b.append(title, desc);
-        b.onclick = () => { state.lesson = lesson; startLesson(false); };
+        if (isComplete) {
+          const replay = document.createElement('span');
+          replay.className = 'block text-xs font-extrabold text-[#FB6F92] mt-0.5';
+          replay.textContent = 'Học lại';
+          b.append(replay);
+        }
+        b.onclick = () => {
+          if (ratingPending) return;
+          state.lesson = lesson;
+          startLesson(isComplete);
+        };
         list.appendChild(b);
       });
       if (state.lesson) {
         const done = lessons?.getCompletedCount(state.lesson) || 0;
         $('lessonSelectedInfo').textContent = `${state.lesson.level} · ${state.lesson.topic} · ${done}/${state.lesson.words.length} từ đã học`;
-        $('btnLessonContinue').textContent = `Học tiếp (${state.lesson.words.length - done} từ)`;
-        $('btnLessonContinue').disabled = done === state.lesson.words.length;
-        $('btnLessonContinue').classList.toggle('opacity-50', done === state.lesson.words.length);
+        const remaining = state.lesson.words.length - done;
+        const continueButton = $('btnLessonContinue');
+        continueButton.textContent = `Học tiếp (${remaining} từ)`;
+        continueButton.disabled = remaining === 0;
+        continueButton.classList.toggle('hidden', remaining === 0);
       }
     }
 
@@ -120,8 +133,9 @@
       if (ratingPending) return;
       const lesson = state.lesson;
       if (!lesson || !lessons || !flashcards) return;
-      const words = lessons.getStudyWords(lesson, restart);
-      if (!words.length) { state.lessonStudying = false; renderLessonBrowser(); showToast('Bài này đã hoàn thành. Hãy chọn Học lại toàn bộ.', 'info'); return; }
+      let words = lessons.getStudyWords(lesson, restart);
+      if (!words.length && !restart) words = lessons.getStudyWords(lesson, true);
+      if (!words.length) return;
       studySession?.clear();
       preferences.update({ level: lesson.level, topic: lesson.topic, fcFilter: 'SMART' }, { persist: true });
       rebuildTopicOptions();
