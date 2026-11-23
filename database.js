@@ -1,6 +1,6 @@
 /**
  * Kawaii JLPT - Local Database
- * Phase 6: non-destructive IndexedDB upgrade + local-first repositories.
+ * Phase 4: centralized local-first persistence API.
  * Existing KawaiiJLPTDB_v2 / datasets / active_dataset are preserved.
  */
 (() => {
@@ -13,6 +13,13 @@
   const APP_STATE_STORE = 'app_state';
   const COMPLETED_SESSIONS_STORE = 'completed_sessions';
   const SYNC_META_STORE = 'sync_metadata';
+  const MIRROR_TOMBSTONE_FLAG = '__kawaiiMirrorDeleted_v1';
+  const LOCAL_MIRROR_TOMBSTONE_PREFIX = '__kawaii_mirror_deleted_v1__:';
+  const REPOSITORY_LOCAL_PREFIX = '__kawaii_repo_v1__:';
+  const REPOSITORY_TOMBSTONE_FLAG = '__kawaiiRepositoryDeleted_v1';
+  const pendingMirrorWrites = new Set();
+  const mirrorQueues = new Map();
+  const mirrorFailures = [];
 
   function openDatabase() {
     if (!window.indexedDB) return Promise.reject(new Error('IndexedDB không được hỗ trợ.'));
@@ -43,10 +50,15 @@
         const tx = db.transaction(storeName, mode);
         const store = tx.objectStore(storeName);
         let result;
-        try { result = operation(store, tx); } catch (error) { reject(error); return; }
         tx.oncomplete = () => resolve(result);
         tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction failed.'));
         tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted.'));
+        try {
+          result = operation(store, tx);
+        } catch (error) {
+          try { tx.abort(); } catch (_) {}
+          reject(error);
+        }
       });
     } finally {
       db.close();
@@ -105,42 +117,225 @@
     } catch { return false; }
   }
 
+  function isMirrorTombstone(value) {
+    return !!(value && typeof value === 'object' && value[MIRROR_TOMBSTONE_FLAG] === true);
+  }
+
+  function createMirrorTombstone() {
+    return { [MIRROR_TOMBSTONE_FLAG]: true, version: 1, deletedAt: Date.now() };
+  }
+
+  function getLocalMirrorTombstoneKey(namespace, key) {
+    return LOCAL_MIRROR_TOMBSTONE_PREFIX + String(namespace) + ':' + String(key);
+  }
+
+  function isRepositoryTombstone(raw) {
+    if (typeof raw !== 'string') return false;
+    try {
+      const value = JSON.parse(raw);
+      return !!(value && typeof value === 'object' && value[REPOSITORY_TOMBSTONE_FLAG] === true);
+    } catch (_) { return false; }
+  }
+
+  // IndexedDB mirror operations for the same key are serialized. This prevents
+  // a slower earlier write from overwriting a later set/remove operation.
+  function enqueueMirrorWrite(storeKey, action, operation) {
+    const key = String(storeKey);
+    const previous = mirrorQueues.get(key) || Promise.resolve();
+    let tracked;
+    tracked = previous.catch(() => {}).then(operation).then(
+      () => ({ ok: true }),
+      error => {
+        const failure = {
+          key,
+          action,
+          message: error && error.message ? error.message : String(error),
+          failedAt: Date.now()
+        };
+        mirrorFailures.push(failure);
+        console.warn('[KawaiiDatabase] IndexedDB mirror operation failed:', failure);
+        return { ok: false, error, failure };
+      }
+    ).finally(() => {
+      pendingMirrorWrites.delete(tracked);
+      if (mirrorQueues.get(key) === tracked) mirrorQueues.delete(key);
+    });
+    mirrorQueues.set(key, tracked);
+    pendingMirrorWrites.add(tracked);
+    return tracked;
+  }
+
+  async function flushMirrors() {
+    let completed = 0;
+    while (pendingMirrorWrites.size) {
+      const batch = [...pendingMirrorWrites];
+      await Promise.all(batch);
+      completed += batch.length;
+    }
+    const failures = mirrorFailures.splice(0);
+    return {
+      completed,
+      pending: pendingMirrorWrites.size,
+      failed: failures.length,
+      failures
+    };
+  }
+
+  // Backward-compatible synchronous Storage interface used by existing modules.
+  // LocalStorage remains the synchronous read path; IndexedDB is its ordered mirror.
   function createMirroredStorage(namespace = 'app') {
     const prefix = String(namespace) + ':';
     return Object.freeze({
       getItem(key) {
-        try { return window.localStorage.getItem(key); } catch { return null; }
+        const localKey = String(key);
+        try {
+          if (window.localStorage.getItem(getLocalMirrorTombstoneKey(namespace, localKey)) === '1') return null;
+          return window.localStorage.getItem(localKey);
+        } catch { return null; }
       },
       setItem(key, value) {
+        const localKey = String(key);
+        const storeKey = prefix + localKey;
         const serialized = String(value);
-        try { window.localStorage.setItem(key, serialized); } catch (error) {
-          console.warn('[KawaiiDatabase] LocalStorage write failed:', error);
+        try {
+          // Clear the local deletion marker before the new value is mirrored.
+          window.localStorage.removeItem(getLocalMirrorTombstoneKey(namespace, localKey));
+          window.localStorage.setItem(localKey, serialized);
+        } catch (error) {
+          throw error; // Synchronous owners must be able to roll back a rejected write.
         }
-        put(APP_STATE_STORE, prefix + key, serialized).catch(error =>
-          console.warn('[KawaiiDatabase] IndexedDB mirror write failed:', error));
+        enqueueMirrorWrite(storeKey, 'set', () => put(APP_STATE_STORE, storeKey, serialized));
       },
       removeItem(key) {
-        try { window.localStorage.removeItem(key); } catch (_) {}
-        remove(APP_STATE_STORE, prefix + key).catch(() => {});
+        const localKey = String(key);
+        const storeKey = prefix + localKey;
+        // Remove the value first to free quota, then persist the local deletion
+        // marker. The IndexedDB tombstone remains the second line of protection.
+        try { window.localStorage.removeItem(localKey); }
+        catch (error) { throw error; }
+        try { window.localStorage.setItem(getLocalMirrorTombstoneKey(namespace, localKey), '1'); }
+        catch (error) { throw error; }
+        enqueueMirrorWrite(storeKey, 'remove', () => put(APP_STATE_STORE, storeKey, createMirrorTombstone()));
       }
     });
+  }
+
+  // Async repository API for new modules. Existing synchronous module APIs are
+  // intentionally not migrated in this phase to avoid changing their contracts.
+  function createRepository(namespace = 'app') {
+    const prefix = String(namespace) + ':';
+    const localPrefix = REPOSITORY_LOCAL_PREFIX + prefix;
+
+    async function read(key, fallback = null) {
+      const localKey = localPrefix + String(key);
+      const storeKey = prefix + String(key);
+      try {
+        const raw = window.localStorage.getItem(localKey);
+        if (raw !== null) {
+          if (isRepositoryTombstone(raw)) return fallback;
+          try { return JSON.parse(raw); } catch { return raw; }
+        }
+      } catch (_) {}
+
+      let mirrored;
+      try { mirrored = await get(APP_STATE_STORE, storeKey); }
+      catch (_) { return fallback; }
+      if (mirrored == null || isMirrorTombstone(mirrored)) return fallback;
+      if (typeof mirrored === 'string') {
+        try { return JSON.parse(mirrored); } catch { return mirrored; }
+      }
+      return mirrored;
+    }
+
+    async function write(key, value) {
+      const localKey = localPrefix + String(key);
+      const storeKey = prefix + String(key);
+      const serialized = JSON.stringify(value);
+      if (serialized === undefined) throw new TypeError('Repository value must be JSON-serializable.');
+      let localSaved = false;
+      let localError = null;
+      try {
+        window.localStorage.setItem(localKey, serialized);
+        localSaved = true;
+      } catch (error) { localError = error; }
+      const mirrored = await enqueueMirrorWrite(storeKey, 'repository-write', () =>
+        put(APP_STATE_STORE, storeKey, serialized));
+      if (!localSaved && !mirrored.ok) {
+        const failure = new Error('Không thể lưu dữ liệu ở LocalStorage hoặc IndexedDB.');
+        failure.cause = { local: localError, indexedDB: mirrored.error };
+        throw failure;
+      }
+      return { localSaved, mirrored: mirrored.ok };
+    }
+
+    async function removeKey(key) {
+      const localKey = localPrefix + String(key);
+      const storeKey = prefix + String(key);
+      const localTombstone = JSON.stringify({ [REPOSITORY_TOMBSTONE_FLAG]: true, deletedAt: Date.now() });
+      let localRemoved = false;
+      let localError = null;
+      try {
+        // A local tombstone hides any stale IndexedDB value if the mirror write fails.
+        window.localStorage.setItem(localKey, localTombstone);
+        localRemoved = true;
+      } catch (error) { localError = error; }
+      const mirrored = await enqueueMirrorWrite(storeKey, 'repository-remove', () =>
+        put(APP_STATE_STORE, storeKey, createMirrorTombstone()));
+      if (!localRemoved && !mirrored.ok) {
+        const failure = new Error('Không thể xóa dữ liệu ở LocalStorage hoặc IndexedDB.');
+        failure.cause = { local: localError, indexedDB: mirrored.error };
+        throw failure;
+      }
+      return { localRemoved, mirrored: mirrored.ok };
+    }
+
+    return Object.freeze({ read, write, remove: removeKey, flush: flushMirrors });
+  }
+
+  // Writes the existing LocalStorage key synchronously, then mirrors either the
+  // object value (app snapshots) or serialized JSON (Storage-compatible modules).
+  async function saveLocalJSONMirrored(key, value, storeKey = key, options = {}) {
+    const localKey = String(key);
+    const mirrorKey = String(storeKey);
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new TypeError('Snapshot value must be JSON-serializable.');
+    const snapshot = JSON.parse(serialized);
+    let localSaved = false;
+    let localError = null;
+    try {
+      window.localStorage.setItem(localKey, serialized);
+      localSaved = true;
+    } catch (error) { localError = error; }
+    const mirrorValue = options.serializeMirror === true ? serialized : snapshot;
+    const mirrored = await enqueueMirrorWrite(mirrorKey, 'save-json', () =>
+      put(APP_STATE_STORE, mirrorKey, mirrorValue));
+    if (!localSaved && !mirrored.ok) {
+      const failure = new Error('Không thể lưu dữ liệu ở LocalStorage hoặc IndexedDB.');
+      failure.cause = { local: localError, indexedDB: mirrored.error };
+      throw failure;
+    }
+    return { localSaved, mirrored: mirrored.ok };
   }
 
   async function mirrorLocalJSON(key, storeKey = key) {
     const raw = (() => { try { return window.localStorage.getItem(key); } catch { return null; } })();
     if (raw === null) return false;
-    await put(APP_STATE_STORE, storeKey, raw);
+    const result = await enqueueMirrorWrite(storeKey, 'mirror-local-json', () =>
+      put(APP_STATE_STORE, storeKey, raw));
+    if (!result.ok) throw result.error;
     return true;
   }
 
   async function restoreMirroredStorage(namespace = 'app') {
     const prefix = String(namespace) + ':';
+    await flushMirrors();
     const rows = await getAll(APP_STATE_STORE);
     let restored = 0;
     for (const row of rows) {
-      if (typeof row.key !== 'string' || !row.key.startsWith(prefix)) continue;
+      if (typeof row.key !== 'string' || !row.key.startsWith(prefix) || isMirrorTombstone(row.value)) continue;
       const localKey = row.key.slice(prefix.length);
       try {
+        if (window.localStorage.getItem(getLocalMirrorTombstoneKey(namespace, localKey)) === '1') continue;
         if (window.localStorage.getItem(localKey) === null && typeof row.value === 'string') {
           window.localStorage.setItem(localKey, row.value);
           restored += 1;
@@ -238,12 +433,29 @@
   }
 
   async function saveAppState(key, value) {
-    await put(APP_STATE_STORE, key, value);
+    const storeKey = String(key);
+    // Capture the value at call time so queued writes cannot observe later mutations.
+    let snapshot = value;
+    if (value && typeof value === 'object') {
+      try {
+        snapshot = typeof structuredClone === 'function'
+          ? structuredClone(value)
+          : JSON.parse(JSON.stringify(value));
+      } catch (_) {
+        try { snapshot = JSON.parse(JSON.stringify(value)); } catch (_) {}
+      }
+    }
+    const result = await enqueueMirrorWrite(storeKey, 'save-app-state', () =>
+      put(APP_STATE_STORE, storeKey, snapshot));
+    if (!result.ok) throw result.error;
     return true;
   }
 
   async function getAppState(key) {
-    return get(APP_STATE_STORE, key);
+    const storeKey = String(key);
+    const pending = mirrorQueues.get(storeKey);
+    if (pending) await pending;
+    return get(APP_STATE_STORE, storeKey);
   }
 
   async function saveSyncMetadata(key, value) {
@@ -265,7 +477,13 @@
     return readRecordMap(SYNC_META_FALLBACK_KEY)[key] || null;
   }
 
-  async function getActiveDataset() { return get(DATASET_STORE, ACTIVE_DATASET_KEY); }
+  async function getActiveDataset() {
+    try {
+      const active = await get(DATASET_STORE, ACTIVE_DATASET_KEY);
+      if (active) return active;
+    } catch (_) {}
+    return getLocalJSON('jlpt_vocab_fallback_v2', null);
+  }
 
   async function saveActiveDataset(payload) {
     const storedPayload = { ...payload, _storedAt: Date.now() };
@@ -284,6 +502,7 @@
       databaseAvailable: false,
       databaseName: DB_NAME,
       databaseVersion: DB_VERSION,
+      pendingMirrorWrites: pendingMirrorWrites.size,
       stores: []
     };
     try {
@@ -302,12 +521,14 @@
   }
 
   window.KawaiiDatabase = Object.freeze({
-    version: '2.0.0-local-first',
+    version: '2.1.0-local-first',
+    apiVersion: 1,
     DB_NAME, DB_VERSION,
     get, put, remove, getAll,
     getActiveDataset, saveActiveDataset,
     getLocalJSON, setLocalJSON,
-    createMirroredStorage, mirrorLocalJSON, restoreMirroredStorage,
+    createMirroredStorage, createRepository, saveLocalJSONMirrored,
+    mirrorLocalJSON, restoreMirroredStorage, flushMirrors,
     saveCompletedSession, saveSyncedSession, markSessionSynced, getPendingSessions,
     saveAppState, getAppState, saveSyncMetadata, getSyncMetadata,
     healthCheck
