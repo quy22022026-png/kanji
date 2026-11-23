@@ -85,26 +85,14 @@
       }
     }
 
-    // Isolate single-word synthesis from sentence synthesis without changing the voice.
-    // A neutral voice avoids applying sentence-style emotion to isolated vocabulary.
-    function wordPrefs(prefs) {
-      return {
-        ...prefs,
-        zenHappy: 0,
-        // Preserve the user's selected speed and pitch; do not split Japanese mora.
-        zenSpeed: Number(prefs.zenSpeed ?? 1),
-        zenPitch: Number(prefs.zenPitch ?? 0)
-      };
-    }
-
-    function makeCacheKey(input, prefs) {
+    function makeCacheKey(input, prefs, isolatedWord) {
       return JSON.stringify([
         prefs.zenSpeed ?? 1, prefs.zenPitch ?? 0, prefs.zenHappy ?? 60,
-        input.engineText, input.reading?.reading ?? null
+        input.engineText, input.reading?.reading ?? null, isolatedWord
       ]);
     }
 
-    async function play(text, customPrefs = null, kanaSample = '') {
+    async function play(text, customPrefs = null, kanaSample = '', wordMode = false) {
       const phrase = String(text || '').trim();
       if (!phrase) return { ok: false, reason: 'empty' };
 
@@ -112,7 +100,8 @@
       const request = requestId;
       const input = pronunciationRequest(phrase,kanaSample);
       const settings = { ...getPrefs(), ...(customPrefs || {}) };
-      const prefs = input.reading ? wordPrefs(settings) : settings;
+      const prefs = input.reading ? {...settings, zenHappy:0} : settings;
+      const isolatedWord = !kanaSample && (wordMode || !!input.reading);
       const engine = getEngine();
 
       if (!engine) {
@@ -123,13 +112,14 @@
         return { ok: false, reason: 'engine-unavailable' };
       }
 
-      const cacheKey = makeCacheKey(input, prefs);
+      const cacheKey = makeCacheKey(input, prefs, isolatedWord);
       try {
         if (!wavCache.has(cacheKey)) {
           const task = synthesisQueue.then(async () => {
             if (request !== requestId || engine !== getEngine()) return;
             const result = await engine.speak(input.engineText, {
               ...(input.reading ? {dict:[input.reading]} : {}),
+              ...(isolatedWord ? {isolatedWord:true} : {}),
               emotion: {
                 happy: Number(prefs.zenHappy ?? 60),
                 neutral: 100 - Number(prefs.zenHappy ?? 60)
@@ -173,23 +163,25 @@
     }
 
     function speakWord(word, customPrefs = null) {
-      if (!word) return Promise.resolve({ ok: false, reason: 'empty' });
-      const reading = String(word.kana || word.kanji || '').trim();
-      // The sentence path remains unchanged. Word Mode only overrides emotion.
-      return speak(reading, wordPrefs({ ...getPrefs(), ...(customPrefs || {}) }));
+      return speakTerm(word?.kana || word?.kanji, customPrefs);
+    }
+
+    function speakTerm(text, customPrefs = null) {
+      return play(text,customPrefs,'',true);
     }
 
     function speakKana(kana, phoneticInfo = null, mode = 'single', customPrefs = null) {
       const text = String(kana || '').trim();
       const mora = singleMora(text) || singleMora(String(phoneticInfo?.clearMora || '').trim());
       const sample = mode === 'with-word' && mora ? String(phoneticInfo?.sampleJa || '').trim() : '';
-      return play(mora || text,wordPrefs({...getPrefs(),...customPrefs}),sample);
+      return play(mora || text,{...customPrefs,zenHappy:0},sample,true);
     }
 
     return Object.freeze({
       destroy() {stop(); revokeCache();},
       speak,
       speakWord,
+      speakTerm,
       speakKana,
       stop,
       clearCache: revokeCache,
