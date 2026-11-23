@@ -264,9 +264,24 @@
     'どんなに':['どんなに','Dù… đến mức nào; biết bao nhiêu'],
     'ても':['ても','Dù; ngay cả khi…'], 'でも':['でも','Nhưng; dù…'],
     'は':['わ','Trợ từ chủ đề'], 'が':['が','Trợ từ chủ ngữ'], 'を':['を','Trợ từ chỉ đối tượng'],
-    'に':['に','Trợ từ chỉ thời gian, đích đến'], 'も':['も','Cũng; ngay cả'],
+    'に':['に','Trợ từ chỉ thời gian, đích đến'], 'へ':['え','Trợ từ chỉ hướng'], 'も':['も','Cũng; ngay cả'],
     'です':['です','Là (lịch sự)']
   });
+
+  const PARTICLE_PRONUNCIATION = Object.freeze({は:'わ',へ:'え',を:'お'});
+
+  function pronunciationText(info, token) {
+    const reading = String(info.reading || info.text || token || '').trim();
+    const isParticle = info.grammar || [info.pos,info.meaning].some(value =>
+      typeof value === 'string' && value.toLocaleLowerCase('vi').startsWith('trợ từ'));
+    if (isParticle && Object.hasOwn(PARTICLE_PRONUNCIATION,token)) return PARTICLE_PRONUNCIATION[token];
+
+    // Keep pronunciation guides such as "が (ga)" visible, but read the Japanese once.
+    return reading.replace(
+      /^([\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー\s]+)\s*[(（]\s*[\p{Script=Latin}\p{M}\s'’.-]+\s*[)）]$/u,
+      '$1'
+    ).trim();
+  }
 
   function create(options = {}) {
     let dictionary = new Map();
@@ -695,7 +710,7 @@
           ? note.slice(0,-baseNote.length).replace(/ · $/u,'')
           : note;
       }
-      activeSpeakText = info.reading || info.text || token;
+      activeSpeakText = pronunciationText(info,token);
       if (elements.sheet) elements.sheet.classList.remove('hidden');
       onSpeak(activeSpeakText);
       return info;
