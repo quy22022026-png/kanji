@@ -1,4 +1,6 @@
-import { WG } from "./tts-wgsl.js";
+// Attention implementation referencing VITS (MIT License). See THIRD_PARTY_NOTICES.md.
+import { WG } from './tts-wgsl.js';
+/** Max phones of one chunk (the attention keeps a row of scores in workgroup memory). */
 const MAX_PHONES = 512;
 const SCORE_ROW = `
 var<workgroup> sc: array<f32, ${MAX_PHONES}>;
@@ -19,7 +21,11 @@ fn sumAll(v: f32, li: u32) -> f32 {
   workgroupBarrier();
   return s;
 }`;
-const VITS_ATTN = `
+/**
+ * VITS relative attention (window W, heads share relk/relv [2W + 1, DH]), one workgroup per (head h, query i):
+ * s = (q_i.k_j + [|j - i| <= W] q_i.relk[j - i + W]) / sqrt(DH); o = sum_j p_j (v_j + [|j - i| <= W] relv[j - i + W]).
+ */
+export const VITS_ATTN = `
 struct P { T: u32, H: u32, DH: u32, W: u32 }
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var<storage, read> qkv: array<f32>;
@@ -58,6 +64,3 @@ ${SCORE_ROW}
     o[i * D + h * p.DH + c] = acc / su;
   }
 }`;
-export {
-  VITS_ATTN
-};
