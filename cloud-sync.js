@@ -12,6 +12,7 @@
     const getBackupSnapshot = options.getBackupSnapshot || (() => ({}));
     const onStatus = options.onStatus || (() => {});
     let client = null;
+    let authSubscription = null;
     let initialized = false;
     let syncPromise = null;
     let scheduledSyncTimer = null;
@@ -75,13 +76,14 @@
       client = window.supabase.createClient(config.url, config.anonKey, {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
       });
-      client.auth.onAuthStateChange((event, session) => {
+      const authListener = client.auth.onAuthStateChange((event, session) => {
         onStatus({
           state: session ? 'authenticated' : 'signed-out',
           event,
           user: session?.user ? { id: session.user.id, email: session.user.email } : null
         });
       });
+      authSubscription = authListener?.data?.subscription || null;
       return true;
     }
 
@@ -404,10 +406,20 @@
       document.addEventListener('visibilitychange', handleVisibilityChange);
     }
 
+    function destroy() {
+      handlePageHide();
+      authSubscription?.unsubscribe();authSubscription = null;
+      client?.auth.stopAutoRefresh?.();
+      window.removeEventListener?.('online', handleOnline);
+      window.removeEventListener?.('pageshow', handleVisibilityChange);
+      window.removeEventListener?.('pagehide', handlePageHide);
+      if (typeof document !== 'undefined') document.removeEventListener?.('visibilitychange',handleVisibilityChange);
+    }
+
     function getClient() { init(); return client; }
 
     return Object.freeze({
-      init, isConfigured, signUp, signIn, signOut, getUser,
+      destroy, init, isConfigured, signUp, signIn, signOut, getUser,
       pushCompletedSessions, pullCompletedSessions, pushBackup, pullBackup, restoreBackup,
       mergeBackupSnapshots, syncNow, scheduleSync, getClient,
       assertAccountOwner
