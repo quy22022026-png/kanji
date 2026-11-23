@@ -180,8 +180,10 @@
     }
 
     const entries = [];
-    const seenTerms = new Set();
+    const seenTerms = new Map();
     const seenIds = new Set();
+    const duplicates = [];
+    const normalizeGloss = value => value.normalize('NFC').replace(/\s+/gu,' ');
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
       const columns = Array.isArray(rows[rowIndex]) ? rows[rowIndex] : [];
       const get = columnIndex => columnIndex >= 0 && columns[columnIndex] !== undefined
@@ -194,26 +196,38 @@
         throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: cần có Từ tiếng Nhật và Nghĩa tiếng Việt.`);
       }
       const normalizedTerm = term.normalize('NFC');
-      const termKey = options.allowHomographs ? normalizedTerm + '\u0000' + get(index.reading) : normalizedTerm;
-      if (seenTerms.has(termKey)) throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: từ bị trùng (${term}).`);
-      seenTerms.add(termKey);
-      const id = get(index.id) || stableId('DICT', options.allowHomographs ? termKey : normalizedTerm);
-      if (seenIds.has(id)) throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: ID bị trùng (${id}).`);
-      seenIds.add(id);
+      const reading = get(index.reading).normalize('NFC');
+      const termKey = options.allowHomographs ? normalizedTerm + '\u0000' + reading : normalizedTerm;
+      const explicitId = get(index.id);
+      const id = explicitId || stableId('DICT', termKey);
+      const previous = seenTerms.get(termKey);
+      if (previous && !options.dedupeIdenticalTerms) {
+        throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: từ bị trùng (${term}).`);
+      }
+      if (explicitId && seenIds.has(id)) {
+        throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: ID bị trùng (${id}).`);
+      }
       const level = get(index.level).toUpperCase();
       if (level && !LEVELS.includes(level)) {
         throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: JLPT không hợp lệ (${level}).`);
       }
-      entries.push({
-        id,
-        term: normalizedTerm,
-        reading: get(index.reading),
-        meaning,
-        pos: get(index.pos),
-        level,
-        note: get(index.note)
-      });
+      const pos = get(index.pos);
+      if (previous) {
+        // The same gloss can be listed in multiple JLPT levels. Keep the first entry.
+        if (normalizeGloss(previous.meaning) !== normalizeGloss(meaning) || normalizeGloss(previous.pos) !== normalizeGloss(pos)) {
+          throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: từ bị trùng (${term}).`);
+        }
+        if (explicitId) seenIds.add(explicitId);
+        duplicates.push(normalizedTerm);
+        continue;
+      }
+      if (seenIds.has(id)) throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: ID bị trùng (${id}).`);
+      seenIds.add(id);
+      const entry = {id, term:normalizedTerm, reading, meaning, pos, level, note:get(index.note)};
+      seenTerms.set(termKey,entry);
+      entries.push(entry);
     }
+    if (duplicates.length) options.onDuplicateTerms?.(duplicates);
     return entries;
   }
 
@@ -319,6 +333,10 @@
           let warning = null;
           const entries = mapper(rows,{
             allowHomographs:true,
+            dedupeIdenticalTerms:true,
+            onDuplicateTerms: terms => {
+              warning = `Tab ${name}: đã gộp ${terms.length} dòng có cùng từ, cách đọc và nghĩa (${[...new Set(terms)].slice(0,4).join(', ')}).`;
+            },
             skipConflicts:true,
             onConflicts: variants => {
               warning = `Tab ${name}: bỏ qua ${variants.length} biến thể có nhiều từ gốc (${variants.slice(0,4).join(', ')}).`;
