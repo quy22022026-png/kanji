@@ -1,52 +1,61 @@
-SỔ GHI — BẢN SỬA NHẬP NHANH / ENTER
+SỔ GHI — TỐI ƯU BÀN PHÍM IPHONE / SAFARI, V13
 
-Nguyên nhân
-Bản cũ vô hiệu hóa bàn phím trong lúc lưu và đọc lại toàn bộ dữ liệu.
-Các chữ số bấm ngay sau Enter vì vậy bị bỏ qua.
+Khác với bản v12 đã gửi trước
+- Nhận số ngay khi ngón tay chạm xuống phím, thay vì chờ click sau khi nhấc tay.
+- Các ngón chạm gối nhau được nhận theo thứ tự chạm, không theo thứ tự nhấc tay.
+- Không dùng khoảng chặn bấm lặp, nên các số giống nhau gõ nhanh vẫn được nhận.
+  Click phát sinh sau một lần chạm không nhập thêm số lần thứ hai.
+- Ngăn cuộn, phóng to do chạm lặp và chọn chữ trong vùng phím số.
+- Giữ chiều cao phím cố định (48 px; 44 px ở chế độ ngang thấp), không phụ thuộc
+  chiều cao hiển thị thay đổi khi Safari ẩn/hiện thanh công cụ.
+- Giữ ổn định các hàng hiển thị và nút công cụ của bàn phím.
+- Hiển thị số đang nhập ngay; cập nhật bảng được gộp theo khung hình.
+- Không tự cuộn trang theo từng chữ số. Cuộn đến ô nhập khi mở bàn phím/Enter.
+- Giữ lại các ô của bảng, chỉ cập nhật ô thay đổi; không dựng lại toàn bảng
+  sau mỗi Enter hoặc mỗi lần lưu thành công.
+- Tái sử dụng chỉ mục dữ liệu/ngày và cập nhật tổng tại chỗ sau khi lưu.
+- Tiếp tục nhận số mới khi một thao tác xóa đang hoàn tất; các lần lưu mới
+  chờ thao tác xóa xong, không xóa nhầm số đang gõ tiếp.
+- Bàn phím máy tính và kích hoạt nút qua công cụ trợ năng vẫn dùng được.
+- Service worker/cache tăng lên v13; HTML yêu cầu JS/CSS v13 để tránh dùng
+  lại bản bàn phím cũ từ cache trình duyệt.
 
-Đã sửa
-- Enter chụp số hiện tại và mở ngay ô nhập mới; các lần lưu chạy theo thứ tự.
-- Tiếp tục nhận số khi lần lưu trước chưa xong, không xóa số đang gõ tiếp.
-- Enter trên ô trống hoặc giữ phím Enter không tạo bản ghi trùng.
-- Hỗ trợ phím số, dấu phẩy/chấm, Backspace và Enter trên bàn phím máy tính
-  khi bàn phím nhập kg đang mở. Các ô tìm kiếm, ngày và hộp thoại dùng bình thường.
-- Số đang chờ lưu có viền vàng, chưa được tính vào tổng đã lưu.
-- Nếu lưu thất bại, giữ nguyên hàng đợi và hiện “Thử lưu lại” / “Sửa lại số lỗi”.
-- Khi hàng đợi chưa xong, chưa chuyển người/ngày để tránh ghi nhầm sổ.
+Cập nhật
+1. Có thể xuất bản sao lưu JSON trong Cài đặt trước khi cập nhật.
+2. Chép các tệp trong gói vào đúng thư mục đang chạy Sổ Ghi, giữ nguyên tên miền
+   và đường dẫn. Bốn tệp thay đổi so với v12 là:
+   soghi.js, soghi.css, soghi.html, soghi-sw.js.
+   Gói đầy đủ có các tệp còn lại giống bộ đã gửi trước.
+3. Trên iPhone, tải lại trang Safari khi có mạng. Nếu dùng app cài trên màn hình
+   chính, đóng hẳn app bằng trình chuyển đổi ứng dụng rồi mở lại khi có mạng.
+4. Không xóa dữ liệu trang web và không cần gỡ ứng dụng để cập nhật. Sổ được
+   lưu trong IndexedDB của trình duyệt; xóa dữ liệu trang web có thể xóa sổ.
+   Bản cập nhật giữ nguyên cấu trúc cơ sở dữ liệu v3 và cấu hình Supabase.
 
-Tối ưu
-- Gõ một chữ số chỉ cập nhật ô đang nhập, không dựng lại cả bảng.
-- Gộp yêu cầu cuộn vào một khung hình.
-- Sau khi lưu thành công, cập nhật dữ liệu tại chỗ thay vì đọc lại cả tài khoản.
-- Kết quả đọc cũ không ghi đè các số vừa lưu.
-- Tái sử dụng bộ định dạng số; tính ngày ghi gần nhất một lần cho danh sách người.
-- Ngắt bộ theo dõi kích thước của bảng khi về trang chủ.
-- Cache PWA tăng từ v11 lên v12.
+Cách lưu
+Enter chốt số hiện tại vào hàng đợi và mở ngay ô nhập mới. Có thể nhập tiếp
+trong lúc các số trước đang lưu. Ô có viền vàng là số chờ lưu, chưa tính vào tổng.
+Nếu lưu lỗi, bấm “Thử lưu lại” hoặc “Sửa lại số lỗi”. “Hủy nhập” chỉ hủy ô đang gõ.
+Giới hạn sản lượng giữ nguyên: 6 chữ số trước dấu phẩy và tối đa 2 số lẻ.
 
-Cài bản cập nhật
-1. Nên xuất bản sao lưu JSON từ Cài đặt trước khi cập nhật.
-2. Giải nén và chép tệp vào đúng thư mục đang chạy Sổ Ghi.
-   Bốn tệp thay đổi: soghi.js, soghi.css, soghi-ui.js, soghi-sw.js.
-   Các tệp còn lại được giữ nguyên từ bộ đã cung cấp.
-3. Mở ứng dụng khi có mạng và tải lại trang. Với ứng dụng đã cài trên điện thoại,
-   nếu vẫn hiện bản cũ, đóng ứng dụng rồi mở lại sau khi tải lại trang trực tuyến.
-4. Giữ nguyên tên miền và đường dẫn đang dùng. Không xóa dữ liệu trang web:
-   dữ liệu sổ được lưu trong IndexedDB của trình duyệt tại tên miền đó.
-   Bản sửa này giữ nguyên cấu trúc và phiên bản cơ sở dữ liệu (v3).
+Chờ thông báo “Đang lưu…” biến mất trước khi đóng app. Hàng đợi chờ lưu vẫn
+nằm trong phiên đang mở cho đến khi IndexedDB xác nhận lưu thành công;
+đóng cưỡng bức khi đang lỗi lưu có thể làm mất số còn chờ. Trình duyệt có hỗ trợ
+sẽ cảnh báo khi cố đóng/tải lại nếu còn số chờ lưu.
 
-Lưu ý sử dụng
-Chờ thông báo “Đang lưu…” biến mất trước khi đóng ứng dụng. Hàng đợi chờ lưu
-được giữ trong phiên đang mở, chưa phải dữ liệu đã lưu bền vững. Trình duyệt có
-hỗ trợ sẽ cảnh báo nếu đóng/tải lại khi còn số chờ lưu. Nếu thiết bị hết dung lượng,
-hãy xử lý lỗi rồi bấm “Thử lưu lại”. “Hủy nhập” chỉ hủy ô đang gõ, không xóa hàng đợi.
-
-Kiểm chứng
-- Đã tái hiện lỗi trên mã gốc bằng chuỗi 12 Enter 34 Enter 56 Enter 7.
-- 15 ca kiểm thử trình duyệt Chromium đạt: chuỗi 150 số, thứ tự và tổng chính xác,
-  giữ số đang gõ khi lưu chậm, Enter liên tiếp, bàn phím vật lý, lỗi ghi và thử lại,
-  khôi phục số lỗi, sửa/xóa, giới hạn số lẻ, chuyển người/ngày, kết quả đọc cũ,
-  bảo vệ số đã kết sổ, nhập trên điện thoại và tải lại dữ liệu.
-- 1 ca PWA đạt: cache v12 đủ 12 tài nguyên, tải lại và nhập bằng cảm ứng ngoại tuyến.
-- Kiểm tra cú pháp JavaScript và JSON manifest đạt.
-- Các phép thử dùng dữ liệu giả trong trình duyệt riêng; không gọi Supabase thật.
-  Luồng đồng bộ với tài khoản Supabase thực tế chưa được kiểm thử.
+Phạm vi kiểm thử
+- Kiểm thử cảm ứng trên Chromium và WebKit (bộ máy trình duyệt của Safari),
+  với màn hình mô phỏng điện thoại. Chưa kiểm thử trên iPhone vật lý.
+- Kiểm tra nhận phím trước khi nhấc tay, chạm gối ngón, hủy/trượt thao tác chạm,
+  bấm lặp nhanh cùng một chữ số, Enter khi ngón tay chưa nhấc, tránh nhập đôi,
+  giữ vị trí phím, thay đổi chiều cao vùng hiển thị, và nhập ngay sau thao tác xóa.
+- Thử 100 số liên tiếp khi sổ giả có 11.000 bản ghi (1.000 bản ghi trên trang
+  đang mở). Kiểm tra đúng thứ tự, số lượng, giá trị và giữ lại các ô bảng.
+  Chromium còn được thử với CPU giảm tốc 6 lần; đây không phải đo hiệu năng
+  trên iPhone thực tế.
+- Chạy lại các tình huống nhập 150 số, Enter lặp, giữ ô nhập tiếp theo, số lẻ,
+  sửa/xóa, lỗi ghi/thử lại, số đã kết sổ, chuyển người/ngày, đọc dữ liệu cũ,
+  nhập ngoại tuyến và tải lại dữ liệu đã lưu.
+- Kiểm tra PWA cache v13 và nhập/tải lại ngoại tuyến.
+- Dữ liệu thử được tạo riêng; không gọi máy chủ Supabase thật. Đồng bộ với
+  tài khoản Supabase thực tế chưa được kiểm thử trong lần sửa này.
