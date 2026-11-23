@@ -82,6 +82,8 @@
         const dictionaryCount = supplemental.dictionary?.entries?.length || 0;
         const variantCount = supplemental.variants?.entries?.length || 0;
         $('badgeSheetStatus').textContent = `Tự đồng bộ (${result.words.length} từ)`;
+        const syncDetail = $('sheetSyncDetail');
+        if (syncDetail) syncDetail.textContent = `Từ điển: ${dictionaryCount} mục (${result.supplemental.dictionary.available ? result.supplemental.dictionary.sheetName : 'cache cũ'}); biến thể: ${variantCount} mục (${result.supplemental.variants.available ? result.supplemental.variants.sheetName : 'cache cũ'}). ${result.warnings.join(' ')}`;
         if (result.warnings.length) {
           console.warn('[Kawaii Sheets]', result.warnings);
         }
@@ -89,7 +91,7 @@
           const detail = `Đã đồng bộ ${result.words.length} từ` +
             (supplemental.dictionary?.available ? `, ${dictionaryCount} mục từ điển` : '') +
             (supplemental.variants?.available ? `, ${variantCount} biến thể` : '') + '.';
-          showToast(result.warnings.length ? `${detail} Không tải được một số tab bổ sung; dữ liệu từ vựng vẫn được cập nhật, dữ liệu bổ sung cũ (nếu có) được giữ.` : detail, result.warnings.length ? 'info' : 'success');
+          showToast(result.warnings.length ? `${detail} Xem lưu ý đồng bộ trong Mô-đun.` : detail, result.warnings.length ? 'info' : 'success');
         } else if (previousFingerprint !== nextFingerprint || previousCount === SAMPLE_DATASET.words.length) {
           showToast(`Đã tự cập nhật ${result.words.length} từ từ Google Sheets!`, 'success');
         }
