@@ -143,7 +143,27 @@
       return JSON.parse(JSON.stringify(value));
     }
 
-    return Object.freeze({ recordError, recordCorrect, dismiss, get, getAll, getWeak, getSummary, getErrorCount, reload });
+    function getBackupSnapshot() { return JSON.parse(JSON.stringify({version:1,words:records})); }
+    function applyBackupSnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new TypeError('Backup không hợp lệ.');
+      const before = records;
+      records = JSON.parse(JSON.stringify(snapshot.words || {}));
+      try { save(); } catch (error) { records = before; throw error; }
+      return getBackupSnapshot();
+    }
+
+    async function restorePersistence() {
+      try {await options.database?.restoreMirroredStorage('weak-words');}
+      catch(error) {console.warn('[weak-words] Dùng bản LocalStorage:',error.message);}
+      reload();
+      try {await options.database?.mirrorLocalJSON(STORAGE_KEY,`weak-words:${STORAGE_KEY}`);}
+      catch(error) {console.warn('[weak-words] Chưa mirror được IndexedDB:',error.message);}
+      return getBackupSnapshot();
+    }
+
+    return Object.freeze({
+      restorePersistence,
+      getBackupSnapshot, applyBackupSnapshot, recordError, recordCorrect, dismiss, get, getAll, getWeak, getSummary, getErrorCount, reload });
   }
 
   window.KawaiiWeakWordsModule = Object.freeze({ create });
