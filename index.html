@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Kawaii JLPT — Lật Thẻ, SRS &amp; Google Sheets</title>
 
   <!-- Fonts -->
@@ -10,29 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet" />
 
-  <!-- Tailwind CSS CDN (hoặc đổi thành vendor/tailwind.min.css khi chạy offline trên repo) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Nunito', 'system-ui', 'sans-serif'],
-            jp: ['"M PLUS Rounded 1c"', '"Hiragino Maru Gothic ProN"', 'sans-serif']
-          },
-          colors: {
-            peach: { 50: '#FFF1F3', 100: '#FFE4E8', 400: '#FF8FA3', 500: '#FB6F92' },
-            matcha: { 50: '#ECFDF5', 100: '#D1FAE5', 400: '#34D399', 500: '#10B981', 600: '#059669' },
-            skysoft: { 50: '#EFF6FF', 100: '#DBEAFE', 500: '#3B82F6' }
-          },
-          boxShadow: {
-            soft: '0 8px 28px -6px rgba(51, 46, 46, 0.07)',
-            card: '0 16px 38px -12px rgba(251, 111, 146, 0.16), 0 4px 12px -2px rgba(51, 46, 46, 0.05)'
-          }
-        }
-      }
-    };
-  </script>
+  <link rel="stylesheet" href="tailwind.css" />
 
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -463,12 +441,18 @@
             <span>📦 Nạp file .JSON</span>
             <input id="jsonFileInput" type="file" accept=".json,application/json" class="hidden" />
           </label>
+          <label for="xlsxFileInput" class="py-2.5 px-3 rounded-2xl bg-[#F6EFE8] text-xs font-extrabold text-center cursor-pointer">
+            📚 Nạp workbook .XLSX
+            <input id="xlsxFileInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden" />
+          </label>
           <button id="btnLoadSampleData" type="button" class="py-2.5 px-3 rounded-2xl bg-peach-50 hover:bg-peach-100 text-peach-500 text-xs font-extrabold transition">
             ✨ Khôi phục bộ mẫu Sheet
           </button>
         </div>
       </div>
 
+      <p id="xlsxImportStatus" class="text-xs text-[#786D69]" aria-live="polite"></p>
+      <p id="sheetSyncDetail" class="text-xs text-[#786D69]" role="status" aria-live="polite"></p>
       <!-- Module 2: ZEN-TTS Marine v1.3.0 -->
       <div class="bg-white border border-[#F1ECE6] rounded-3xl p-5 shadow-soft flex flex-col gap-3">
         <div class="flex items-center justify-between gap-2">
@@ -481,6 +465,8 @@
           <span id="badgeZenTts" class="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-[#F6EFE8] text-[#786D69] shrink-0">Chưa nạp</span>
         </div>
 
+        <progress id="zenDownloadProgress" max="100" value="0" class="w-full" hidden aria-label="Tiến độ tải ZEN-TTS"></progress>
+        <button id="btnCancelZenDownload" type="button" hidden class="text-xs underline">Hủy tải ZEN-TTS</button>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           <button id="btnDownloadZenMarine" type="button" class="py-2.5 px-4 rounded-2xl bg-matcha-600 text-white text-xs font-extrabold hover:bg-matcha-500 transition">
             ⬇️ Tải ZEN-TTS Marine v1.3.0
@@ -522,30 +508,32 @@
 
   <!-- ==================== TAP-TO-TRANSLATE BOTTOM SHEET ==================== -->
   <div id="translateSheet" class="hidden fixed inset-x-0 bottom-0 z-40 p-3 sm:p-4 pointer-events-none flex justify-center">
-    <div class="pointer-events-auto w-full max-w-md bg-white border-2 border-[#FFD6DF] rounded-3xl shadow-2xl p-4 sm:p-5 animate-pop">
-      <div class="flex items-start justify-between gap-3">
-        <div class="flex items-center gap-3 min-w-0">
-          <div id="trCharBox" class="min-w-[52px] h-[52px] px-2.5 rounded-2xl bg-peach-50 text-peach-500 font-jp font-extrabold text-2xl flex items-center justify-center shrink-0">
-            食
-          </div>
-          <div class="min-w-0">
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <span id="trReading" class="font-jp text-sm font-extrabold text-peach-500"></span>
-              <span id="trHanViet" class="hidden text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-lg bg-[#F6EFE8] text-[#5E524E]"></span>
-              <span id="trLevel" class="hidden text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-peach-50 text-peach-500"></span>
-            </div>
-            <p id="trMeaning" class="text-sm sm:text-base font-extrabold text-[#2B2626] mt-0.5 leading-snug"></p>
-            <p id="trNote" class="text-[11px] font-semibold text-[#8C7F7A] mt-0.5"></p>
-          </div>
+    <div class="translation-panel pointer-events-auto w-full max-w-md bg-white border-2 border-[#FFD6DF] rounded-3xl shadow-2xl p-4 sm:p-5 animate-pop">
+      <div id="trCharBox" class="translation-headword rounded-2xl bg-peach-50 text-peach-500 font-jp font-extrabold"></div>
+      <div class="translation-actions flex items-center gap-1.5">
+        <button id="trSpeakBtn" type="button" class="w-9 h-9 rounded-xl bg-peach-50 text-peach-500 hover:bg-peach-100 flex items-center justify-center transition active:scale-90" aria-label="Phát âm cụm từ">
+          🔊
+        </button>
+        <button id="trCloseBtn" type="button" class="w-9 h-9 rounded-xl bg-[#F6EFE8] text-[#5E524E] hover:bg-[#EDE3D8] flex items-center justify-center font-extrabold text-xs transition" aria-label="Đóng">
+          ✕
+        </button>
+      </div>
+      <div class="translation-details">
+        <div class="flex items-baseline gap-1.5 flex-wrap">
+          <span id="trReading" class="font-jp text-sm font-extrabold text-peach-500"></span>
+          <span id="trHanViet" class="hidden text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-lg bg-[#F6EFE8] text-[#5E524E]"></span>
+          <span id="trLevel" class="hidden text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-peach-50 text-peach-500"></span>
         </div>
-        <div class="flex items-center gap-1.5 shrink-0">
-          <button id="trSpeakBtn" type="button" class="w-9 h-9 rounded-xl bg-peach-50 text-peach-500 hover:bg-peach-100 flex items-center justify-center transition active:scale-90" title="Phát âm chữ này">
-            🔊
-          </button>
-          <button id="trCloseBtn" type="button" class="w-9 h-9 rounded-xl bg-[#F6EFE8] text-[#5E524E] hover:bg-[#EDE3D8] flex items-center justify-center font-extrabold text-xs transition" aria-label="Đóng">
-            ✕
-          </button>
+        <p id="trContextLabel" class="hidden text-xs font-bold text-[#786D69] mt-1">Nghĩa trong câu</p>
+        <p id="trMeaning" class="text-sm sm:text-base font-extrabold text-[#2B2626] mt-0.5 leading-snug"></p>
+        <div id="trBaseSection" class="hidden mt-2 pt-2 border-t border-[#F1ECE6]">
+          <div class="flex flex-wrap items-baseline gap-1.5">
+            <span class="text-xs font-bold text-[#786D69]">Nghĩa từ gốc</span>
+            <span id="trBaseWord" class="font-jp font-bold text-peach-500" lang="ja"></span>
+          </div>
+          <p id="trBaseMeaning" class="text-sm font-semibold text-[#2B2626] leading-snug"></p>
         </div>
+        <p id="trNote" class="text-[11px] font-semibold text-[#8C7F7A] mt-0.5"></p>
       </div>
     </div>
   </div>
@@ -656,17 +644,41 @@
        CORE JAVASCRIPT ARCHITECTURE (window.KawaiiApp)
        ========================================================================= -->
   
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="vendor/supabase/supabase.min.js"></script>
   <script src="database.js"></script>
+  <script src="preferences.js"></script>
+  <script src="progress.js"></script>
   <script src="supabase-config.js"></script>
   <script src="cloud-sync.js"></script>
   <script src="study-session.js"></script>
+  <script src="srs.js"></script>
   <script src="flashcard.js"></script>
+  <script src="lessons.js"></script>
+  <script src="sheets.js"></script>
   <script src="quiz.js"></script>
   <script src="weak-words.js"></script>
+  <script src="audio-manager.js"></script>
   <script src="pronunciation.js"></script>
+  <script src="kana.js"></script>
   <script src="meaning.js"></script>
   <script src="flashcard-interaction.js"></script>
+  <script src="matching.js"></script>
+  <script src="vendor/sheetjs/xlsx.mini.min.js"></script>
+  <script src="module-system.js"></script>
+  <script src="ui-utils.js"></script>
+  <script src="app-config.js"></script>
+  <script src="notifications.js"></script>
+  <script src="vocabulary-store.js"></script>
+  <script src="xlsx-adapter.js"></script>
+  <script src="data-source.js"></script>
+  <script src="cloud-backup.js"></script>
+  <script src="flashcard-view.js"></script>
+  <script src="quiz-view.js"></script>
+  <script src="settings-view.js"></script>
+  <script src="application-shell.js"></script>
+  <script src="runtime-startup.js"></script>
+  <script src="compatibility.js"></script>
+  <script src="module-manifest.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
