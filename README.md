@@ -1,4 +1,4 @@
-# Kawaii JLPT — Phase 7 (v3.6.0) — Phase 4
+# Kawaii JLPT — Phase 8.5 UX & Lesson Stability (v3.7.4)
 
 ## Included files
 - `index.html` — app shell with six scripts loaded in dependency order.
@@ -6,6 +6,7 @@
 - `database.js` — compatibility storage layer.
 - `study-session.js` — local study-session queue and first-attempt Flashcard score.
 - `flashcard.js` — Flashcard/session adapter.
+- `lesson-planner.js` — topic-based lesson grouping and balanced 8–12 word lesson chunks.
 - `quiz.js` — bidirectional multiple-choice quiz engine.
 - `weak-words.js` — cumulative weak-word tracking.
 - `app.js` — Core integration, Quiz UI, Weak Words UI, and legacy app.
@@ -61,6 +62,7 @@
 - Phase 4 Quiz tests: direction-agnostic options, immediate feedback state, one retry round, retry errors counted, combined score.
 - Phase 4 Weak Words tests: cumulative errors, different-session recovery, repeated errors, manual dismissal preserving history.
 - Static checks for script load order and exported module assets.
+- Phase 8.5 lesson planning, lesson/global session isolation, replay/resume, iOS gesture suppression and cloud reset merge tests.
 
 Safari iOS interactive testing has not yet been completed. Use a test copy before replacing any deployed app.
 
@@ -240,3 +242,32 @@ Only the public anon/publishable key belongs in the browser. Never place a `serv
 - Sentence synthesis and Kana mode remain unchanged. Word and sentence audio cache keys remain separated by their effective emotion settings.
 - This targets unnatural word-level prosody; Japanese pitch-accent accuracy is not guaranteed by the TTS engine.
 - `tests/phase8-3-word-voice.test.cjs` covers the behavior. Real iPhone Safari listening tests remain necessary.
+
+## Phase 8.5 — Topic lessons, iOS interaction and progress stability (v3.7.4)
+
+### Lesson flow and UX
+- The Flashcard entry screen starts with **Bắt đầu học**, then offers JLPT level and lessons grouped by the existing Google Sheets topic labels.
+- Topic order and word order follow the sheet. Lessons are balanced to 8–12 words where possible. A 13–15 word topic remains one lesson rather than being split into two undersized lessons; topics below 8 words remain a small lesson and are not mixed with another topic.
+- Selecting an incomplete lesson opens the existing Flashcard module immediately. The lesson list, lesson action buttons and general session filters are hidden while studying; a compact lesson title/progress bar and **Danh sách bài** action remain visible.
+- Lesson sessions use their own mirrored storage key (`kawaii_jlpt_lesson_session_v1`) and no longer replace an unfinished general SMART/SRS session.
+- Returning to the list preserves the active lesson queue. Selecting that lesson again resumes it; selecting another lesson starts that lesson without losing Good/Again progress already recorded for the first one.
+- Good marks a word complete. Again marks it incomplete and requeues it. **Học lại toàn bộ** starts a full lesson replay without clearing SRS history; Again during replay can remove the lesson-complete state for that word.
+- Previous SRS records with `reps > 0` are treated as already learned when no explicit lesson status exists, avoiding unnecessary relearning after upgrade.
+- Replay mode is stored against the active lesson session ID, so it survives closing the lesson list and a reload.
+
+### Flashcard and iOS interaction fixes
+- StudySession can rate any card still in the queue, not only the first card. This keeps previous/next navigation usable without producing a queue mismatch error.
+- Swipe click suppression expires and is cleared on pointer cancellation/new pointer input, preventing a missing Safari click event from swallowing the next intentional tap.
+- Critical `.hidden` behavior and lesson-card layout have local CSS fallbacks if the Tailwind CDN is temporarily unavailable. Full visual styling still uses the configured Tailwind CDN.
+
+### Data and sync integrity
+- Lesson progress entries carry timestamps; a newer Again can override an older Good when devices merge progress.
+- Explicit progress reset carries a `resetAt` marker. A newer reset wins over stale remote progress instead of being undone by max/union merging.
+- ZEN-TTS now checks `zen-worker.js` and statically referenced local worker dependencies before downloading the large model bundle. The worker/vendor files themselves are not included in this source package; Web Speech fallback remains available when iOS exposes a Japanese voice.
+
+### Phase 8.5 verification
+- All runtime JavaScript files pass `node --check`.
+- Automated tests cover topic grouping/chunk sizes, Good/Again status merge, reset tombstones, session isolation, out-of-order card rating, gesture suppression expiry and ZEN-TTS preflight.
+- A Chromium 390×844 mobile-viewport interaction simulation used sample vocabulary to test: start → choose level → open lesson → flip → swipe Good/Again → next-arrow then rate → back to list → resume → switch mode → reload-style restore → complete → replay → Again during replay → close list/reload → resume replay. All tested assertions passed.
+- The browser simulation used mocked LocalStorage and disabled IndexedDB because it ran in an opaque `about:blank` context. It is not a substitute for a physical iPhone Safari test.
+- Real iPhone/iPad Safari, a live Google Sheets fetch, and a real Supabase project integration test remain outstanding.
