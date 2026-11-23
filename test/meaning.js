@@ -5,10 +5,133 @@
 (() => {
   'use strict';
 
+  const VERB_FORMS = ['te', 'past', 'negative', 'past-negative', 'polite', 'past-polite', 'negative-polite', 'past-negative-polite', 'stem'];
+  const GODAN_ENDINGS = {
+    う: ['って','った','わ','い'], つ: ['って','った','た','ち'], る: ['って','った','ら','り'],
+    む: ['んで','んだ','ま','み'], ぶ: ['んで','んだ','ば','び'], ぬ: ['んで','んだ','な','に'],
+    く: ['いて','いた','か','き'], ぐ: ['いで','いだ','が','ぎ'], す: ['して','した','さ','し']
+  };
+
+  function verbClass(pos) {
+    const label = String(pos || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    if (/nhom\s*(3|iii)\b|suru|irregular/.test(label)) return 'irregular';
+    if (/nhom\s*(2|ii)\b|ichidan/.test(label)) return 'ichidan';
+    if (/nhom\s*(1|i)\b|godan/.test(label)) return 'godan';
+    return null;
+  }
+
+  // Generate forms only when the dictionary identifies the conjugation class.
+  function inflections(term, reading, pos) {
+    const group = verbClass(pos);
+    const last = term.slice(-1);
+    let tailLength = 1;
+    let endings;
+    if (group === 'irregular' && ['来る','くる'].includes(term)) {
+      const kana = ['きて','きた','こない','こなかった','きます','きました','きません','きませんでした','き'];
+      const surfaces = term === '来る' ? ['来て','来た','来ない','来なかった','来ます','来ました','来ません','来ませんでした','来'] : kana;
+      return surfaces.map((surface,i) => [surface,kana[i],VERB_FORMS[i]]);
+    }
+    if (group === 'irregular' && term.endsWith('する')) {
+      tailLength = 2;
+      endings = ['して','した','しない','しなかった','します','しました','しません','しませんでした','し'];
+    } else if (group === 'ichidan' && last === 'る') {
+      endings = ['て','た','ない','なかった','ます','ました','ません','ませんでした',''];
+    } else if (group === 'godan' && GODAN_ENDINGS[last]) {
+      const [te,past,negative,stem] = GODAN_ENDINGS[last];
+      const iku = ['行く','いく','ゆく','往く','逝く'].includes(term);
+      endings = [iku ? 'って' : te, iku ? 'った' : past, negative+'ない',negative+'なかった',stem+'ます',stem+'ました',stem+'ません',stem+'ませんでした',stem];
+    } else {
+      return [];
+    }
+    const tail = term.slice(-tailLength);
+    const readingStem = reading.endsWith(tail) ? reading.slice(0,-tailLength) : '';
+    return endings.map((ending,i) => [
+      term.slice(0,-tailLength)+ending,
+      readingStem || reading === tail ? readingStem+ending : '',
+      VERB_FORMS[i]
+    ]);
+  }
+
+  // These continuations carry meaning only after the matching verb form.
+  const CONTINUATIONS = {
+    te: [
+      [['はいけませんでした','はいけません','はいけない','はだめです','はだめ'], 'Cấm đoán', word => `Không được ${word}`],
+      [['もかまいません','もいいです','もいい','もよい'], 'Cho phép', word => `Có thể ${word}`],
+      [['も'], 'Nhượng bộ', word => `Dù có ${word}`],
+      [['くださいませんか','ください'], 'Yêu cầu lịch sự', word => `Xin hãy ${word}`],
+      [['いませんでした','いなかった','いません','いない'], 'Phủ định của ～ている', word => `Không ${word} hoặc chưa ${word}, tùy ngữ cảnh`],
+      [['いました','いた'], '～ている ở quá khứ', word => `Đã hoặc đang ${word} vào lúc đó, tùy ngữ cảnh`],
+      [['います','いる'], 'Có thể chỉ hành động đang diễn ra, thói quen hoặc trạng thái tiếp diễn', word => `Đang ${word}`],
+      [['しまいました','しまった','しまいます','しまう'], 'Hoàn tất hoặc xảy ra ngoài ý muốn', word => `Đã ${word} rồi, có thể ngoài ý muốn`],
+      [['みました','みます','みる'], 'Thử làm', word => `Thử ${word}`],
+      [['おきました','おきます','おく'], 'Làm trước để chuẩn bị', word => `${word} trước để chuẩn bị`]
+    ],
+    past: [
+      [['ことがありません','ことがない'], 'Kinh nghiệm', word => `Chưa từng ${word}`],
+      [['ことがあります','ことがある'], 'Kinh nghiệm', word => `Đã từng ${word}`],
+      [['ほうがいいです','ほうがいい'], 'Lời khuyên', word => `Nên ${word}`]
+    ],
+    negative: [
+      [['といけません','といけない'], 'Nghĩa vụ', word => `Phải ${word}`],
+      [['でください'], 'Yêu cầu không làm', word => `Xin đừng ${word}`]
+    ],
+    'negative-stem': [
+      [['くてもいいです','くてもいい','くてもかまいません'], 'Không bắt buộc', word => `Không cần ${word}`],
+      [['ければなりません','ければならない','ければいけません','ければいけない'], 'Nghĩa vụ', word => `Phải ${word}`]
+    ],
+    stem: [
+      [['やすい'], 'Dễ thực hiện', word => `Dễ ${word}`],
+      [['にくい'], 'Khó thực hiện', word => `Khó ${word}`],
+      [['たくありません','たくない'], 'Ý muốn phủ định', word => `Không muốn ${word}`],
+      [['たいです','たい'], 'Ý muốn', word => `Muốn ${word}`]
+    ]
+  };
+
+  function phraseEntry(source, start, surface, entry, form) {
+    let best = null;
+    const end = start + surface.length;
+    for (const [suffixes, label, translate] of CONTINUATIONS[form] || []) {
+      for (const suffix of suffixes) {
+        if (!source.startsWith(suffix,end)) continue;
+        const text = source.slice(start,end+suffix.length);
+        if (best && best.text.length >= text.length) continue;
+        const meaning = entry.meaning.trim().split(';')[0].trim().replace(/[。.]$/u,'');
+        const gloss = meaning.charAt(0).toLocaleLowerCase('vi')+meaning.slice(1);
+        best = {
+          ...entry, text,
+          reading: entry.reading ? entry.reading+suffix : text,
+          meaning: translate(gloss),
+          note: `${label} · Từ gốc: ${entry.base}`
+        };
+      }
+    }
+    return best;
+  }
+  const IDIOMS = Object.freeze([
+    ['腹が立つ','はらがたつ','Tức giận; nổi giận','Động từ nhóm 1'],
+    ['役に立つ','やくにたつ','Có ích; hữu ích','Động từ nhóm 1'],
+    ['気に入る','きにいる','Ưng ý; thích','Động từ nhóm 1'],
+    ['気を付ける','きをつける','Chú ý; cẩn thận','Động từ nhóm 2'],
+    ['お腹が空く','おなかがすく','Đói bụng','Động từ nhóm 1']
+  ]);
+  const GRAMMAR = Object.freeze({
+    'はいけません':['はいけません','Không được làm… (mẫu cấm đoán)'],
+    'いけません':['いけません','Không được; không ổn'],
+    'なければならない':['なければならない','Phải làm…'],
+    'なくてもいい':['なくてもいい','Không cần làm… cũng được'],
+    'ことができる':['ことができる','Có thể làm…'],
+    'どんなに':['どんなに','Dù… đến mức nào; biết bao nhiêu'],
+    'ても':['ても','Dù; ngay cả khi…'], 'でも':['でも','Nhưng; dù…'],
+    'は':['わ','Trợ từ chủ đề'], 'が':['が','Trợ từ chủ ngữ'], 'を':['を','Trợ từ chỉ đối tượng'],
+    'に':['に','Trợ từ chỉ thời gian, đích đến'], 'も':['も','Cũng; ngay cả'],
+    'です':['です','Là (lịch sự)']
+  });
+
   function create(options = {}) {
     let dictionary = new Map();
     const getDictionaryIndex = options.getDictionaryIndex || (() => dictionary);
-    const lookup = options.lookup || ((token, parentWord) => getDictionaryIndex().get(token) || (parentWord && (parentWord.kanji || '').includes(token) ? {text:token,reading:parentWord.kana,hanViet:parentWord.hanViet || '',meaning:parentWord.meaning,level:parentWord.level,note:`Thuộc từ: ${parentWord.kanji}`} : {
+    const formsByDictionary = new WeakMap();
+    const lookup = options.lookup || ((token, parentWord) => getDictionaryIndex().get(token) || (parentWord && [parentWord.kanji,parentWord.kana].includes(token) ? {text:token,reading:parentWord.kana,hanViet:parentWord.hanViet || '',meaning:parentWord.meaning,level:parentWord.level,note:`Thuộc từ: ${parentWord.kanji}`} : {
       text: token, reading: token, hanViet: '',
       meaning: 'Chưa có trong từ điển hiện tại',
       note: 'Ấn nút 🔊 để nghe cách phát âm'
@@ -26,16 +149,20 @@
         cachedDictionaryRef = dictionary;
         cachedDictionarySize = size;
         cachedDictionaryMaxLength = dictionary && typeof dictionary.keys === 'function'
-          ? [...dictionary.keys()].reduce((max, key) => Math.max(max, Array.from(String(key || '')).length), 1)
+          ? [...dictionary.keys()].reduce((max, key) => Math.max(max, String(key || '').length), 1)
           : 8;
       }
       return cachedDictionaryMaxLength;
     }
 
     function buildDictionaryIndex({ builtinDictionary = {}, words = [], supplemental = {} } = {}) {
-      const index = new Map();
+      const index = new Map(Object.entries(GRAMMAR).map(([text,[reading,meaning]]) => [text,{text,reading,meaning,grammar:true}]));
+      for (const [text,reading,meaning,pos] of IDIOMS) {
+        const entry = {text,reading,meaning,pos,note:'Cụm cố định'};
+        index.set(text,entry);index.set(reading,entry);
+      }
       Object.entries(builtinDictionary || {}).forEach(([term, entry]) => {
-        index.set(term, { text: term, ...(entry || {}) });
+        index.set(term, { ...index.get(term), text: term, ...(entry || {}) });
       });
 
       const dictionaryEntries = supplemental.dictionary?.entries || [];
@@ -48,6 +175,7 @@
           hanViet: item.hanViet || '',
           meaning: item.meaning || '',
           level: item.level || '',
+          pos:item.pos || '',
           note: [item.pos, item.note].filter(Boolean).join(' · ')
         });
       });
@@ -56,6 +184,7 @@
         if (!word) return;
         const entry = {
           text: word.kanji || word.kana,
+          pos:word.pos || '',
           reading: word.kana,
           hanViet: word.hanViet || '',
           meaning: word.meaning,
@@ -73,7 +202,7 @@
             const reading = match[2];
             if (kanji.length === 1 && !index.has(kanji)) {
               index.set(kanji, {
-                text: kanji,
+                text: kanji, fragment:true,
                 reading,
                 hanViet: hanVietParts[partIndex] || word.hanViet || '',
                 meaning: `Trong từ "${word.kanji}" (${word.meaning})`,
@@ -85,6 +214,33 @@
         }
       });
 
+      const forms = new Map();
+      function addForm(text,entry,form) {
+        if (!forms.has(text)) forms.set(text,[]);
+        forms.get(text).push({entry,form});
+      }
+      for (const [term,entry] of [...index]) {
+        if (entry.fragment || typeof entry.meaning !== 'string' || !entry.meaning.trim()) continue;
+        // Some vocabulary rows list a verbal noun such as 勉強 with POS “nhóm 3”.
+        const isSuruNoun = verbClass(entry.pos) === 'irregular' && !term.endsWith('する') && /danh từ/i.test(entry.pos);
+        const base = term === entry.reading && entry.text ? entry.text : term;
+        const dictionaryForm = isSuruNoun ? term+'する' : term;
+        const reading = isSuruNoun ? (entry.reading || '')+'する' : (entry.reading || '');
+        for (const [text,kana,form] of inflections(dictionaryForm,reading,entry.pos)) {
+          if (!text) continue;
+          const inflected = {
+            ...entry, text, reading: kana, base: isSuruNoun ? base+'する' : base,
+            note: [entry.note,`Dạng chia của ${isSuruNoun ? base+'する' : base}`].filter(Boolean).join(' · ')
+          };
+          if (CONTINUATIONS[form]) addForm(text,inflected,form);
+          if (form === 'negative' && text.endsWith('ない')) {
+            addForm(text.slice(0,-1),{...inflected,reading:kana.slice(0,-1)},'negative-stem');
+          }
+          if (form !== 'stem' && !index.has(text)) index.set(text,{...inflected,reading:kana || text});
+        }
+      }
+      formsByDictionary.set(index,forms);
+
       const variantEntries = supplemental.variants?.entries || [];
       variantEntries.forEach(item => {
         const variant = String(item?.variant || '').trim();
@@ -92,49 +248,86 @@
         if (!variant || !base) return;
         const baseEntry = index.get(base);
         index.set(variant, baseEntry
-          ? { ...baseEntry, text: variant, note: [baseEntry.note, `Biến thể của ${base}`].filter(Boolean).join(' · ') }
+          ? { ...baseEntry, text: variant, base, reading:index.get(variant)?.reading || variant, note: [baseEntry.note, `Biến thể của ${base}`].filter(Boolean).join(' · ') }
           : { text: variant, reading: variant, hanViet: '', meaning: `Dạng biến thể của ${base}`, level: '', note: `Từ gốc: ${base}` });
       });
       return index;
     }
 
+    let segmenter = options.segmenter;
+    if (segmenter === undefined) {
+      try {segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ja',{granularity:'word'}) : null;} catch {segmenter = null;}
+    }
     function tokenize(sentence) {
       const source = String(sentence || '');
-      const dictionary = getDictionaryIndex() || new Map();
-      const dictionaryMaxLength = getDictionaryMaxLength(dictionary);
-      const tokens = [];
-      let index = 0;
-
-      while (index < source.length) {
-        const char = source[index];
-        if (/^[。、！？「」『』（）\s.,!?]+$/u.test(char)) {
-          tokens.push({ text: char, punct: true });
-          index += 1;
-          continue;
+      const lexicon = getDictionaryIndex() || new Map();
+      const forms = formsByDictionary.get(lexicon) || new Map();
+      const maxLength = getDictionaryMaxLength(lexicon);
+      const segmentEnds = new Map();
+      const boundaries = new Set([0,source.length]);
+      if (segmenter) {
+        for (const {index,segment} of segmenter.segment(source)) {
+          segmentEnds.set(index,index+segment.length);
+          boundaries.add(index);
+          boundaries.add(index+segment.length);
         }
+      }
 
-        let matched = '';
-        const maxLength = Math.min(32, dictionaryMaxLength, source.length - index);
-        for (let length = maxLength; length >= 1; length -= 1) {
-          const candidate = source.slice(index, index + length);
-          if (dictionary.has(candidate)) {
-            matched = candidate;
-            break;
+      const separator = /^[\p{P}\p{Z}\s\p{S}]$/u;
+      const charAt = index => String.fromCodePoint(source.codePointAt(index));
+      function matchAt(start) {
+        let best = null;
+        for (let length = Math.min(maxLength,source.length-start); length > 0; length--) {
+          const text = source.slice(start,start+length);
+          const entry = lexicon.get(text);
+          if (entry && !entry.fragment && (!best || length > best.text.length)) {
+            const end = start+length;
+            const insideWord = end < (segmentEnds.get(start) || 0);
+            const complete = boundaries.has(end) && (length > 1 || boundaries.has(start));
+            if (!segmenter || (!insideWord && (complete || entry.base || entry.grammar))) {
+              best = {text,punct:false,known:true,base:entry.base || text};
+            }
+          }
+          for (const candidate of forms.get(text) || []) {
+            const phrase = phraseEntry(source,start,text,candidate.entry,candidate.form);
+            if (!phrase) continue;
+            const end = start+phrase.text.length;
+            if (segmenter && !boundaries.has(end)) continue;
+            const preferredBase = entry?.base;
+            const sameLength = best?.text.length === phrase.text.length;
+            if (!best || phrase.text.length > best.text.length ||
+                (sameLength && (!best.entry || (phrase.base === preferredBase && best.base !== preferredBase)))) {
+              best = {text:phrase.text,punct:false,known:true,base:phrase.base,entry:phrase};
+            }
           }
         }
+        return best;
+      }
 
-        if (matched) {
-          tokens.push({ text: matched, punct: false, known: true });
-          index += matched.length;
-        } else if (/^[\u30A0-\u30FFー]$/u.test(char)) {
-          let end = index + 1;
-          while (end < source.length && /^[\u30A0-\u30FFー]$/u.test(source[end])) end += 1;
-          tokens.push({ text: source.slice(index, end), punct: false, known: false });
-          index = end;
-        } else {
-          tokens.push({ text: char, punct: false, known: false });
-          index += 1;
+      const tokens = [];
+      let cursor = 0;
+      while (cursor < source.length) {
+        const char = charAt(cursor);
+        if (separator.test(char)) {
+          tokens.push({text:char,punct:true});
+          cursor += char.length;
+          continue;
         }
+        const known = matchAt(cursor);
+        if (known) {
+          tokens.push(known);
+          cursor += known.text.length;
+          continue;
+        }
+        let end = segmentEnds.get(cursor) || cursor+char.length;
+        while (end < source.length && !matchAt(end)) {
+          const next = charAt(end);
+          if (separator.test(next)) break;
+          if (segmenter && !/^[\p{Script=Hiragana}ー]$/u.test(next)) break;
+          end = segmentEnds.get(end) || end+next.length;
+        }
+        tokens.push({text:source.slice(cursor,end),punct:false,known:false});
+        cursor = end;
       }
       return tokens;
     }
@@ -156,7 +349,7 @@
         event.stopPropagation();
         clearActiveTokens();
         span.classList.add('is-active');
-        showPopup(lookupKey || text, parentWord);
+        showPopup(lookupKey || text, parentWord, optionsForToken.entry);
       });
       return span;
     }
@@ -185,15 +378,16 @@
           container.appendChild(document.createTextNode(token.text));
         } else {
           container.appendChild(createTapToken(token.text, token.text, parentWord, {
-            underline: token.known
+            underline: token.known,
+            entry: token.entry
           }));
         }
       });
     }
 
-    function showPopup(token, parentWord = null) {
+    function showPopup(token, parentWord = null, contextualEntry = null) {
       const elements = getElements() || {};
-      const info = lookup(token, parentWord) || {};
+      const info = contextualEntry || lookup(token, parentWord) || {};
       if (elements.charBox) elements.charBox.textContent = info.text || token;
       if (elements.reading) elements.reading.textContent = info.reading || '';
       if (elements.hanViet) {
