@@ -101,6 +101,7 @@
           ...entry, text,
           reading: entry.reading ? entry.reading+suffix : text,
           meaning: translate(gloss),
+          contextual: true,
           note: `${label} · Từ gốc: ${entry.base}`
         };
       }
@@ -151,7 +152,7 @@
     ];
     return forms.flatMap(([text,kana,meaning,kind],i) => {
       const note = `${kind} · Từ gốc: ${base}`;
-      const form = {...entry, text, reading:kana, meaning, base, note};
+      const form = {...entry, text, reading:kana, meaning, base, note, contextual:true};
       const polite = {...form, text:text+'です', reading:kana+'です', meaning:meaning+' ạ'};
       return i ? [form,polite] : [polite];
     });
@@ -271,6 +272,27 @@
     let dictionary = new Map();
     const getDictionaryIndex = options.getDictionaryIndex || (() => dictionary);
     const formsByDictionary = new WeakMap();
+    const readingAliasesByDictionary = new WeakMap();
+
+    function findRoot(index,base) {
+      if (!base) return null;
+      const isRoot = entry => Boolean(entry?.meaning && !entry.base && !entry.fragment);
+      const key = base.normalize('NFC');
+      const exact = index.get(key);
+      const readings = readingAliasesByDictionary.get(index);
+      const isKana = /^[\p{Script=Hiragana}\p{Script=Katakana}ー]+$/u.test(key);
+      if (isRoot(exact) && (!isKana || exact.text === key || !readings)) return exact;
+      if (isKana) {
+        const alias = readings?.get(hiragana(key));
+        if (alias) return alias;
+      }
+      if (key.endsWith('する')) {
+        const noun = index.get(key.slice(0,-2));
+        if (isRoot(noun) && verbClass(noun.pos) === 'irregular') return noun;
+      }
+      return null;
+    }
+
     const analyzer = createAnalyzer();
     const sentenceRenders = new WeakMap();
     const lookup = options.lookup || ((token, parentWord) => getDictionaryIndex().get(token) || (parentWord && [parentWord.kanji,parentWord.kana].includes(token) ? {text:token,reading:parentWord.kana,hanViet:parentWord.hanViet || '',meaning:parentWord.meaning,level:parentWord.level,note:`Thuộc từ: ${parentWord.kanji}`} : {
@@ -359,6 +381,18 @@
       for (const [text,reading,meaning] of FIXED_EXPRESSIONS) {
         if (!index.has(text)) index.set(text,{text,reading,meaning,note:'Lời nói cố định'});
       }
+      // A kana alias can resolve a base written with kanji in Tu dien.
+      // Multiple terms with the same reading leave the alias unavailable.
+      const readings = new Map();
+      for (const entry of index.values()) {
+        if (entry.fragment || !entry.meaning || !entry.reading) continue;
+        if (!/^[\p{Script=Hiragana}\p{Script=Katakana}ー]+$/u.test(entry.reading)) continue;
+        const reading = hiragana(entry.reading.normalize('NFC'));
+        if (!readings.has(reading)) readings.set(reading,entry);
+        else if (readings.get(reading)?.text !== entry.text) readings.set(reading,null);
+      }
+      readingAliasesByDictionary.set(index,readings);
+
       const forms = new Map();
       function addForm(text,entry,form) {
         if (!forms.has(text)) forms.set(text,[]);
@@ -385,7 +419,8 @@
             addForm(text.slice(0,-1),{...inflected,reading:kana.slice(0,-1)},'negative-stem');
           }
           if (form !== 'stem' && !index.has(text)) {
-            index.set(text,{...inflected,reading:kana || text,meaning:verbMeaning(entry.meaning,form)});
+            const meaning = verbMeaning(entry.meaning,form);
+            index.set(text,{...inflected,reading:kana || text,meaning,contextual:meaning !== entry.meaning});
           }
         }
       }
@@ -396,10 +431,20 @@
         const variant = String(item?.variant || '').trim();
         const base = String(item?.base || '').trim();
         if (!variant || !base) return;
-        const baseEntry = index.get(base);
-        index.set(variant, baseEntry
-          ? { ...baseEntry, text: variant, base, reading:index.get(variant)?.reading || variant, note: [baseEntry.note, `Biến thể của ${base}`].filter(Boolean).join(' · ') }
-          : { text: variant, reading: variant, hanViet: '', meaning: `Dạng biến thể của ${base}`, level: '', note: `Từ gốc: ${base}` });
+        const existing = index.get(variant);
+        const baseEntry = findRoot(index,base);
+        if (existing?.meaning && !existing.fragment && !existing.base) return;
+        // A supplied relation can fill a gap without removing a verified tense or grammar gloss.
+        if (existing?.contextual &&
+            (existing.base === base || (baseEntry && findRoot(index,existing.base) === baseEntry))) return;
+        index.set(variant, {
+          ...baseEntry,
+          text:variant,
+          base,
+          reading:existing?.reading || variant,
+          meaning:baseEntry?.meaning || `Dạng biến thể của ${base}`,
+          note:baseEntry ? '' : `Từ gốc: ${base}`
+        });
       });
       return index;
     }
@@ -440,9 +485,9 @@
           if (!part) return false;
           if (part.lemma) {
             const lemma = source.slice(start,cursor)+part.lemma;
-            const entry = lexicon.get(lemma);
+            const entry = findRoot(lexicon,lemma);
             if (lemma === base || entry?.text === base ||
-                (entry && entry.text === lexicon.get(base)?.text)) return true;
+                (entry && entry === findRoot(lexicon,base))) return true;
           }
           cursor = part.end;
         }
@@ -503,17 +548,19 @@
           let reading = hiragana(part.reading || part.text);
           let suffix;
           while ((suffix = morphology.get(end)) && ['動詞','形容詞','助動詞'].includes(part.pos) &&
-                 (suffix.pos === '助動詞' || (suffix.detail === '接続助詞' && /^[てで]$/u.test(suffix.text)))) {
+                 (suffix.pos === '助動詞' ||
+                  (part.pos === '動詞' && suffix.pos === '動詞' && suffix.detail === '接尾') ||
+                  (suffix.detail === '接続助詞' && /^[てで]$/u.test(suffix.text)))) {
             end = suffix.end;
             reading += hiragana(suffix.reading || suffix.text);
           }
           const text = source.slice(cursor,end);
-          const root = part.lemma && lexicon.get(part.lemma);
-          const hasGloss = Boolean(root?.meaning && !root.fragment && !root.base && end === part.end);
+          const root = findRoot(lexicon,part.lemma);
+          const hasGloss = Boolean(root && end === part.end);
           const entry = hasGloss
             ? {...root,text,reading,base:part.lemma,note:`Từ gốc: ${part.lemma}`}
-            : {text,reading,meaning:'Chưa có nghĩa cho cụm này',note:part.lemma ? `Từ gốc: ${part.lemma}` : ''};
-          tokens.push({text,punct:false,known:hasGloss,base:part.lemma || undefined,entry});
+            : {text,reading,base:part.lemma,meaning:'Chưa có nghĩa cho cụm này',note:part.lemma ? `Từ gốc: ${part.lemma}` : ''};
+          tokens.push({text,punct:false,known:Boolean(root),base:part.lemma || undefined,entry});
           cursor = end;
           continue;
         }
@@ -623,8 +670,23 @@
         elements.level.textContent = info.level || '';
         elements.level.classList.toggle('hidden', !info.level);
       }
-      if (elements.meaning) elements.meaning.textContent = info.meaning || '';
-      if (elements.note) elements.note.textContent = info.note || '';
+      const baseEntry = findRoot(getDictionaryIndex(),info.base);
+      const hasBaseSection = Boolean(baseEntry && elements.baseSection && (info.base !== token || info.contextual));
+      if (elements.contextLabel) elements.contextLabel.classList.toggle('hidden', !info.contextual);
+      if (elements.meaning) {
+        elements.meaning.textContent = info.meaning || '';
+        elements.meaning.classList.toggle('hidden', hasBaseSection && !info.contextual);
+      }
+      if (elements.baseSection) elements.baseSection.classList.toggle('hidden', !hasBaseSection);
+      if (elements.baseWord) elements.baseWord.textContent = hasBaseSection ? info.base : '';
+      if (elements.baseMeaning) elements.baseMeaning.textContent = hasBaseSection ? baseEntry.meaning : '';
+      if (elements.note) {
+        const note = info.note || '';
+        const baseNote = `Từ gốc: ${info.base}`;
+        elements.note.textContent = hasBaseSection && note.endsWith(baseNote)
+          ? note.slice(0,-baseNote.length).replace(/ · $/u,'')
+          : note;
+      }
       activeSpeakText = info.reading || info.text || token;
       if (elements.sheet) elements.sheet.classList.remove('hidden');
       onSpeak(activeSpeakText);
