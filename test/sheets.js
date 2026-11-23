@@ -197,7 +197,7 @@
       const termKey = options.allowHomographs ? normalizedTerm + '\u0000' + get(index.reading) : normalizedTerm;
       if (seenTerms.has(termKey)) throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: từ bị trùng (${term}).`);
       seenTerms.add(termKey);
-      const id = get(index.id) || stableId('DICT', normalizedTerm);
+      const id = get(index.id) || stableId('DICT', options.allowHomographs ? termKey : normalizedTerm);
       if (seenIds.has(id)) throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: ID bị trùng (${id}).`);
       seenIds.add(id);
       const level = get(index.level).toUpperCase();
@@ -217,7 +217,7 @@
     return entries;
   }
 
-  function mapVariantRows(rows) {
+  function mapVariantRows(rows, options = {}) {
     if (!Array.isArray(rows) || !rows.length) throw new Error('Tab Biến thể trống hoặc không đọc được.');
     const headers = rows[0].map(normalizeHeader);
     const index = {
@@ -228,8 +228,8 @@
       throw new Error('Tab Biến thể cần hai cột: Biến thể và Từ gốc.');
     }
 
-    const entries = [];
     const seen = new Map();
+    const conflicts = new Set();
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
       const columns = Array.isArray(rows[rowIndex]) ? rows[rowIndex] : [];
       const get = columnIndex => columnIndex >= 0 && columns[columnIndex] !== undefined
@@ -244,12 +244,16 @@
       if (variant === base) throw new Error(`Tab Biến thể, dòng ${rowIndex + 1}: biến thể không được trùng từ gốc (${base}).`);
       if (seen.has(variant)) {
         const previousBase = seen.get(variant);
-        throw new Error(`Tab Biến thể, dòng ${rowIndex + 1}: biến thể ${variant} bị khai báo trùng (${previousBase} / ${base}).`);
+        if (!options.skipConflicts) {
+          throw new Error(`Tab Biến thể, dòng ${rowIndex + 1}: biến thể ${variant} bị khai báo trùng (${previousBase} / ${base}).`);
+        }
+        if (previousBase !== base) conflicts.add(variant);
+        continue;
       }
       seen.set(variant, base);
-      entries.push({ variant, base });
     }
-    return entries;
+    if (conflicts.size > 0) options.onConflicts?.([...conflicts]);
+    return [...seen].filter(([variant]) => !conflicts.has(variant)).map(([variant,base]) => ({variant,base}));
   }
 
   function isHtmlResponse(text) {
@@ -305,24 +309,26 @@
     }
 
     async function loadOptional(sheetId, sheetName, mapper, kind) {
-      let text;
-      try {
-        text = await requestCsv(sheetId, sheetName, true);
-      } catch (error) {
-        if (String(error?.message || '').includes('chế độ riêng tư')) throw error;
-        return {
-          available: false,
-          entries: [],
-          warning: `Không tải được tab ${sheetName}; dữ liệu ${kind} đã lưu trước đó sẽ được giữ nguyên (${error.message}).`
-        };
+      // The supplied workbook uses ASCII tab names; existing live Sheets may use accents.
+      const aliases = sheetName === OPTIONAL_TABS.dictionary ? [sheetName,'Tu dien'] : [sheetName,'Bien the'];
+      const errors = [];
+      for (const name of aliases) {
+        try {
+          const rows = parseCSV(await requestCsv(sheetId,name,true));
+          if (rows.length < 2) throw new Error('Tab không có dữ liệu.');
+          let warning = null;
+          const entries = mapper(rows,{
+            allowHomographs:true,
+            skipConflicts:true,
+            onConflicts: variants => {
+              warning = `Tab ${name}: bỏ qua ${variants.length} biến thể có nhiều từ gốc (${variants.slice(0,4).join(', ')}).`;
+            }
+          });
+          if (!entries.length) throw new Error('Tab không còn dữ liệu hợp lệ.');
+          return {available:true,entries,sheetName:name,warning};
+        } catch(error) {errors.push(`${name}: ${error.message}`);}
       }
-      try {
-      const rows = parseCSV(text);
-      if (!rows.length) {
-        return { available: false, entries: [], warning: `Tab ${sheetName} chưa có dữ liệu; giữ dữ liệu ${kind} đã lưu trước đó.` };
-      }
-      return { available: true, entries: mapper(rows), warning: null };
-      } catch (error) {return {available:false,entries:[],warning:`Tab ${sheetName}: ${error.message}; giữ cache bổ sung.`};}
+      return {available:false,entries:[],warning:`Không tải được ${kind} (${errors.join('; ')}). Giữ cache bổ sung cũ.`};
     }
 
     async function fetchDataset({ url, levels = ['N5', 'N4', 'N3'] } = {}) {
