@@ -46,7 +46,7 @@
 
     function reload() {
       data = loadData();
-      return getHistory();
+      return [...data.attempts];
     }
 
     function shuffle(items) {
@@ -232,7 +232,27 @@
       };
     }
 
+    function getBackupSnapshot() { return JSON.parse(JSON.stringify(data)); }
+    function applyBackupSnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new TypeError('Backup không hợp lệ.');
+      const before = data;
+      data = {attempts:Array.isArray(snapshot.attempts) ? JSON.parse(JSON.stringify(snapshot.attempts)) : [],lastTestedAt:{...(snapshot.lastTestedAt || {})},wrongCounts:{...(snapshot.wrongCounts || {})}};
+      try { save(); } catch (error) { data = before; throw error; }
+      return getBackupSnapshot();
+    }
+
+    async function restorePersistence() {
+      try {await options.database?.restoreMirroredStorage('quiz');}
+      catch(error) {console.warn('[quiz] Dùng bản LocalStorage:',error.message);}
+      reload();
+      try {await options.database?.mirrorLocalJSON(STORAGE_KEY,`quiz:${STORAGE_KEY}`);}
+      catch(error) {console.warn('[quiz] Chưa mirror được IndexedDB:',error.message);}
+      return getBackupSnapshot();
+    }
+
     return Object.freeze({
+      restorePersistence,
+      getBackupSnapshot, applyBackupSnapshot,
       start, currentQuestion, answer, next, snapshot, getStats,
       getHistory: () => [...data.attempts],
       reload,
