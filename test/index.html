@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Kawaii JLPT — Lật Thẻ, SRS &amp; Google Sheets</title>
 
   <!-- Fonts -->
@@ -524,7 +524,15 @@
           <span id="trHanViet" class="hidden text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-lg bg-[#F6EFE8] text-[#5E524E]"></span>
           <span id="trLevel" class="hidden text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-peach-50 text-peach-500"></span>
         </div>
+        <p id="trContextLabel" class="hidden text-xs font-bold text-[#786D69] mt-1">Nghĩa trong câu</p>
         <p id="trMeaning" class="text-sm sm:text-base font-extrabold text-[#2B2626] mt-0.5 leading-snug"></p>
+        <div id="trBaseSection" class="hidden mt-2 pt-2 border-t border-[#F1ECE6]">
+          <div class="flex flex-wrap items-baseline gap-1.5">
+            <span class="text-xs font-bold text-[#786D69]">Nghĩa từ gốc</span>
+            <span id="trBaseWord" class="font-jp font-bold text-peach-500" lang="ja"></span>
+          </div>
+          <p id="trBaseMeaning" class="text-sm font-semibold text-[#2B2626] leading-snug"></p>
+        </div>
         <p id="trNote" class="text-[11px] font-semibold text-[#8C7F7A] mt-0.5"></p>
       </div>
     </div>
