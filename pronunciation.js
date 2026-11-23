@@ -6,6 +6,32 @@
 (() => {
   'use strict';
 
+  const MODERN_READINGS = Object.freeze({を:'お',ぢ:'じ',づ:'ず'});
+
+  function singleMora(value) {
+    const kana = value.normalize('NFKC').replace(/[ァ-ン]/gu,
+      char => String.fromCharCode(char.charCodeAt(0)-0x60));
+    // Exclude standalone small kana and っ, which are not taught as standalone sounds.
+    const basic = /^[あ-ん]$/u.test(kana) && !'ぁぃぅぇぉっゃゅょゎ'.includes(kana);
+    const combined = /^[きぎしじちにひびぴみり][ゃゅょ]$/u.test(kana);
+    return basic || combined ? MODERN_READINGS[kana] || kana : '';
+  }
+
+  function pronunciationRequest(text, sample) {
+    const mora = singleMora(text);
+    if (!mora) return {engineText:text,fallbackText:text};
+    const katakana = mora.replace(/[ぁ-ん]/gu,
+      char => String.fromCharCode(char.charCodeAt(0)+0x60));
+    // For a sound with an example, apply the reading to a dedicated cue only.
+    // The ZEN dictionary substitutes the cue before synthesis and leaves the example intact.
+    const surface = sample ? '練習用単音' : mora;
+    return {
+      engineText:sample ? `${surface}。${sample}。` : surface,
+      fallbackText:sample ? `${katakana}。${sample}。` : katakana,
+      reading:{surface,reading:mora,accent:0}
+    };
+  }
+
   function create(options = {}) {
     const getEngine = options.getEngine || (() => null);
     const getPrefs = options.getPrefs || (() => ({}));
@@ -71,33 +97,39 @@
       };
     }
 
-    function makeCacheKey(text, prefs) {
-      return [prefs.zenSpeed ?? 1, prefs.zenPitch ?? 0, prefs.zenHappy ?? 60, text].join(':');
+    function makeCacheKey(input, prefs) {
+      return JSON.stringify([
+        prefs.zenSpeed ?? 1, prefs.zenPitch ?? 0, prefs.zenHappy ?? 60,
+        input.engineText, input.reading?.reading ?? null
+      ]);
     }
 
-    async function speak(text, customPrefs = null) {
+    async function play(text, customPrefs = null, kanaSample = '') {
       const phrase = String(text || '').trim();
       if (!phrase) return { ok: false, reason: 'empty' };
 
       stop();
       const request = requestId;
-      const prefs = { ...getPrefs(), ...(customPrefs || {}) };
+      const input = pronunciationRequest(phrase,kanaSample);
+      const settings = { ...getPrefs(), ...(customPrefs || {}) };
+      const prefs = input.reading ? wordPrefs(settings) : settings;
       const engine = getEngine();
 
       if (!engine) {
-        if (prefs.fallbackWebSpeech !== false && fallbackSpeak(phrase, prefs.zenSpeed)) {
+        if (prefs.fallbackWebSpeech !== false && fallbackSpeak(input.fallbackText, prefs.zenSpeed)) {
           return { ok: true, engine: 'web-speech-fallback' };
         }
         onToast('ZEN-TTS chưa sẵn sàng và trình duyệt không có giọng Nhật dự phòng.', 'warning');
         return { ok: false, reason: 'engine-unavailable' };
       }
 
-      const cacheKey = makeCacheKey(phrase, prefs);
+      const cacheKey = makeCacheKey(input, prefs);
       try {
         if (!wavCache.has(cacheKey)) {
           const task = synthesisQueue.then(async () => {
             if (request !== requestId || engine !== getEngine()) return;
-            const result = await engine.speak(phrase, {
+            const result = await engine.speak(input.engineText, {
+              ...(input.reading ? {dict:[input.reading]} : {}),
               emotion: {
                 happy: Number(prefs.zenHappy ?? 60),
                 neutral: 100 - Number(prefs.zenHappy ?? 60)
@@ -128,12 +160,16 @@
       } catch (error) {
         if (request !== requestId) return { ok: false, reason: 'cancelled' };
         const fallbackEnabled = prefs.fallbackWebSpeech !== false;
-        if (fallbackEnabled && fallbackSpeak(phrase, prefs.zenSpeed)) {
+        if (fallbackEnabled && fallbackSpeak(input.fallbackText, prefs.zenSpeed)) {
           return { ok: true, engine: 'web-speech-fallback', fallbackReason: error.message };
         }
         onToast(`ZEN-TTS gặp lỗi: ${error.message || 'Không xác định'}`, 'error');
         return { ok: false, reason: 'zen-error', error };
       }
+    }
+
+    function speak(text, customPrefs = null) {
+      return play(text,customPrefs);
     }
 
     function speakWord(word, customPrefs = null) {
@@ -144,16 +180,10 @@
     }
 
     function speakKana(kana, phoneticInfo = null, mode = 'single', customPrefs = null) {
-      const mora = phoneticInfo && phoneticInfo.clearMora
-        ? phoneticInfo.clearMora
-        : String(kana || '');
-      // Single Kana must not be synthesized as a one-character sentence.
-      // Keep the existing 'with-word' sample behavior, but use Word Mode
-      // for both paths so Kana does not inherit sentence-style emotion.
-      const text = mode === 'with-word' && phoneticInfo && phoneticInfo.sampleJa
-        ? `${mora}。${phoneticInfo.sampleJa}。`
-        : String(mora).trim();
-      return speak(text, wordPrefs({ ...getPrefs(), ...(customPrefs || {}) }));
+      const text = String(kana || '').trim();
+      const mora = singleMora(text) || singleMora(String(phoneticInfo?.clearMora || '').trim());
+      const sample = mode === 'with-word' && mora ? String(phoneticInfo?.sampleJa || '').trim() : '';
+      return play(mora || text,wordPrefs({...getPrefs(),...customPrefs}),sample);
     }
 
     return Object.freeze({
