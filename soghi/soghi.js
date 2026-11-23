@@ -19,6 +19,10 @@
   const entryDock = $("#soghi-entry-dock");
   const keyboardToggle = $("#soghi-keyboard-toggle");
   const virtualKeyboard = $("#soghi-virtual-keyboard");
+  const kgDisplay = $("#soghi-kg-display");
+  const entryMode = $("#soghi-entry-mode");
+  const cancelEntryButton = $("#soghi-cancel-entry");
+  const deleteEntryButton = $("#soghi-delete-entry");
 
   const state = {
     db: null,
@@ -824,16 +828,15 @@
       if (state.saving) return;
       const cell = event.target.closest("button");
       if (!cell) return;
-      const entry = state.bookData.entries.find(e => e.id === cell.dataset.entryId);
-      if (entry && Ledger.lockedIds(state.bookData).has(entry.id)) {
+      const cache = cachedBook(), index = cache.positions.get(cell.dataset.entryId);
+      const entry = index === undefined ? null : state.bookData.entries[index];
+      if (entry && cache.locked.has(entry.id)) {
         return showToast("Số này đã kết sổ, không thể sửa hoặc xóa.");
       }
       const d = draft();
       if (entry) { d.value = String(entry.kg).replace(".", ","); d.entryId = entry.id; d.replace = true; }
       else if (!cell.hasAttribute("data-draft")) { d.value = ""; d.entryId = null; d.replace = false; }
       setVirtualKeyboard(true);
-      renderGrid();
-      scrollToDraft();
     }));
     const paper = $("#book-paper");
     let swipeStart = null;
@@ -851,10 +854,10 @@
     paper.addEventListener("touchcancel", () => { swipeStart = null; }, { passive: true });
     renderBookContent();
     if ("ResizeObserver" in window) {
-      let width = 0;
+      let width = Math.round($(".notebook-grid-wrap").clientWidth);
       gridObserver = new ResizeObserver(items => {
         const w = Math.round(items[0].contentRect.width);
-        if (w !== width) { width = w; renderGrid(); }
+        if (w !== width) { width = w; requestEntryPaint(true); }
       });
       gridObserver.observe($(".notebook-grid-wrap"));
     }
@@ -864,9 +867,73 @@
     const data = await getAccountData(context.accountId);
     if (sameBook(context) && token === state.viewToken && revision === state.bookRevision) { state.bookData = data; renderBookContent(); }
   }
+  let bookCache = null;
+  function cachedBook() {
+    if (bookCache?.source !== state.bookData) {
+      bookCache = {
+        source: state.bookData,
+        positions: new Map(state.bookData.entries.map((entry, index) => [entry.id, index])),
+        locked: Ledger.lockedIds(state.bookData),
+        day: null
+      };
+    }
+    return bookCache;
+  }
+  function cachedDay() {
+    const cache = cachedBook(), key = draftKey();
+    if (cache.day?.key !== key) {
+      const entries = state.bookData.entries.filter(e => e.harvesterId === state.currentHarvesterId && e.date === state.currentDate).sort(Ledger.order);
+      cache.day = { key, entries, positions: new Map(entries.map((entry, index) => [entry.id, index])), total100: entries.reduce((sum, entry) => sum + Ledger.kg100(entry.kg), 0) };
+    }
+    return cache.day;
+  }
+  function applySavedEntry(item, saved) {
+    if (state.account?.id !== item.context.accountId || !state.bookData) return;
+    const cache = cachedBook(), index = cache.positions.get(saved.id);
+    if (index === undefined) {
+      cache.positions.set(saved.id, state.bookData.entries.length);
+      state.bookData.entries.push(saved);
+    } else state.bookData.entries[index] = saved;
+    const day = cache.day;
+    if (day?.key !== draftKey(item.context)) return;
+    const dayIndex = day.positions.get(saved.id);
+    if (dayIndex === undefined) {
+      const last = day.entries[day.entries.length - 1];
+      if (last && Ledger.order(last, saved) > 0) { cache.day = null; return; }
+      day.positions.set(saved.id, day.entries.length);
+      day.entries.push(saved);
+      day.total100 += Ledger.kg100(saved.kg);
+    } else {
+      day.total100 += Ledger.kg100(saved.kg) - Ledger.kg100(day.entries[dayIndex].kg);
+      day.entries[dayIndex] = saved;
+    }
+  }
+  function setText(node, value) {
+    const text = String(value);
+    if (node.textContent !== text) node.textContent = text;
+  }
+  let entryPaintFrame = 0, gridPaintNeeded = false, entryScrollNeeded = false;
+  function requestEntryPaint(gridChanged = false, scroll = false) {
+    gridPaintNeeded ||= gridChanged;
+    entryScrollNeeded ||= scroll;
+    if (entryPaintFrame) return;
+    entryPaintFrame = requestAnimationFrame(() => {
+      entryPaintFrame = 0;
+      const paintGrid = gridPaintNeeded, scrollDraft = entryScrollNeeded;
+      gridPaintNeeded = false; entryScrollNeeded = false;
+      if (state.screen !== "book") return;
+      if (paintGrid) renderGrid();
+      else {
+        const cell = $("[data-draft]");
+        if (cell) setText(cell, draft().value || "…");
+        else renderGrid();
+      }
+      if (scrollDraft) scrollToDraft();
+    });
+  }
   function renderBookContent() {
     if (state.screen !== "book" || !state.bookData || !$(".notebook-grid")) return;
-    renderGrid();
+    requestEntryPaint(true);
     const person = state.bookData.harvesters.find(p => p.id === state.currentHarvesterId);
     if (person) {
       $(".book-topbar").style.setProperty("--person-color", personColor(person));
@@ -878,13 +945,13 @@
   function renderGrid() {
     const grid = $(".notebook-grid");
     if (!grid || state.screen !== "book" || !state.bookData) return;
-    const savedEntries = state.bookData.entries.filter(e => e.harvesterId === state.currentHarvesterId && e.date === state.currentDate).sort(Ledger.order);
+    const day = cachedDay(), savedEntries = day.entries;
     const pending = state.entryQueue.filter(item => sameBook(item.context));
     const pendingById = new Map(pending.map(item => [item.id, item]));
     const entries = savedEntries.map(entry => pendingById.has(entry.id) ? { ...entry, kg: pendingById.get(entry.id).kg } : entry);
     const savedIds = new Set(savedEntries.map(entry => entry.id));
     for (const item of pending) if (!savedIds.has(item.id)) entries.push({ id: item.id, kg: item.kg });
-    const locked = Ledger.lockedIds(state.bookData), d = draft();
+    const locked = cachedBook().locked, d = draft();
     if (d.entryId && (!entries.some(e => e.id === d.entryId) || locked.has(d.entryId))) {
       d.entryId = null; d.value = ""; d.replace = false;
     }
@@ -892,23 +959,45 @@
     const base = width < 340 ? 4 : 5;
     const hasDraft = !d.entryId && (d.value !== "" || !virtualKeyboard.hidden);
     const columns = Math.max(base, Math.ceil((entries.length + (hasDraft ? 1 : 0)) / 7));
-    grid.style.setProperty("--columns", columns);
-    const cells = [];
+    if (grid.style.getPropertyValue("--columns") !== String(columns)) grid.style.setProperty("--columns", columns);
+    // Keep existing cell nodes. Saving one number must not rebuild the notebook.
+    if (grid.children.length < columns * 7) {
+      const cells = document.createDocumentFragment();
+      for (let i = grid.children.length; i < columns * 7; i++) {
+        const cell = document.createElement("button");
+        cell.type = "button";
+        cells.appendChild(cell);
+      }
+      grid.appendChild(cells);
+    }
+    while (grid.children.length > columns * 7) grid.lastElementChild.remove();
     for (let i = 0; i < columns * 7; i++) {
       const entry = entries[i];
       const active = entry ? entry.id === d.entryId : hasDraft && i === entries.length;
       const waiting = entry && pendingById.has(entry.id);
-      const cls = active ? "entry-cell draft-cell" : entry ? `entry-cell${waiting ? " pending-cell" : locked.has(entry.id) ? " settled-cell" : ""}` : "empty-cell";
+      const settled = !!entry && locked.has(entry.id), cell = grid.children[i];
+      const valueKey = active ? d.value : entry?.kg;
+      const previous = cell.soghiCell;
+      if (previous && previous.id === entry?.id && previous.active === active && previous.waiting === waiting && previous.settled === settled && previous.value === valueKey && cell.textContent === previous.text) continue;
+      const cls = active ? "entry-cell draft-cell" : entry ? `entry-cell${waiting ? " pending-cell" : settled ? " settled-cell" : ""}` : "empty-cell";
       const value = active ? (d.value || "…") : entry ? formatNumber(entry.kg) : "";
-      const label = active ? "Số đang nhập, chưa lưu" : entry ? formatNumber(entry.kg) + " kg" + (waiting ? ", đang chờ lưu" : locked.has(entry.id) ? ", đã kết sổ" : "") : "Nhập số kg";
-      cells.push(`<button type="button" class="${cls}" ${entry ? `data-entry-id="${escapeHTML(entry.id)}"` : "data-add-entry"} ${active ? "data-draft" : ""} aria-label="${escapeHTML(label)}">${escapeHTML(value)}</button>`);
+      const label = active ? "Số đang nhập, chưa lưu" : entry ? value + " kg" + (waiting ? ", đang chờ lưu" : settled ? ", đã kết sổ" : "") : "Nhập số kg";
+      cell.className = cls;
+      if (entry) cell.dataset.entryId = entry.id; else delete cell.dataset.entryId;
+      cell.toggleAttribute("data-add-entry", !entry);
+      cell.toggleAttribute("data-draft", active);
+      cell.setAttribute("aria-label", label);
+      setText(cell, value);
+      cell.soghiCell = { id: entry?.id, active, waiting, settled, value: valueKey, text: value };
     }
-    grid.innerHTML = cells.join("");
-    $("#day-count").textContent = savedEntries.length + " lần ghi";
-    $("#summary-count").textContent = savedEntries.length;
-    const total = savedEntries.reduce((s, e) => s + Ledger.kg100(e.kg), 0) / 100;
-    $("#summary-kg").innerHTML = `${formatNumber(total)} <small>kg</small>`;
-    $("#soghi-live-summary").textContent = `Đã lưu: ${savedEntries.length} lần\nTổng: ${formatNumber(total)} kg`;
+    setText($("#day-count"), savedEntries.length + " lần ghi");
+    setText($("#summary-count"), savedEntries.length);
+    const total = day.total100 / 100, totalText = formatNumber(total);
+    if ($("#summary-kg").dataset.total !== totalText) {
+      $("#summary-kg").innerHTML = `${totalText} <small>kg</small>`;
+      $("#summary-kg").dataset.total = totalText;
+    }
+    setText($("#soghi-live-summary"), `Đã lưu: ${savedEntries.length} lần\nTổng: ${totalText} kg`);
     updateEntrySaveStatus();
     showKgDisplay();
   }
@@ -918,18 +1007,20 @@
     if (openKeyboard) setVirtualKeyboard(true);
   }
   function setVirtualKeyboard(open) {
+    if (!open) releaseKeyboardPointers();
     virtualKeyboard.hidden = !open;
     keyboardToggle.setAttribute("aria-expanded", String(open));
     keyboardToggle.setAttribute("aria-label", open ? "Đóng bàn phím nhập kg" : "Mở bàn phím nhập kg");
     document.body.classList.toggle("keyboard-open", open);
     updateKeyboardSpace();
-    if (state.screen === "book") { renderGrid(); if (open) scrollToDraft(); }
+    if (state.screen === "book") { showKgDisplay(); requestEntryPaint(true, open); }
   }
   function updateKeyboardSpace() {
     state.keyboardHeight = virtualKeyboard.hidden ? 0 : Math.ceil(virtualKeyboard.getBoundingClientRect().height);
     document.body.style.setProperty("--soghi-keyboard-height", state.keyboardHeight + "px");
   }
   function hideEntryDock() {
+    releaseKeyboardPointers();
     entryDock.hidden = true;
     virtualKeyboard.hidden = true;
     document.body.classList.remove("entry-active", "keyboard-open");
@@ -940,10 +1031,10 @@
   function showKgDisplay() {
     if (state.screen !== "book") return;
     const d = draft();
-    $("#soghi-kg-display").textContent = d.value || "Chưa nhập";
-    $("#soghi-entry-mode").textContent = d.entryId ? "Đang sửa · chưa lưu" : "Số mới · ENTER để lưu";
-    $("#soghi-delete-entry").hidden = !d.entryId;
-    $("#soghi-cancel-entry").hidden = !d.entryId && !d.value;
+    setText(kgDisplay, d.value || "Chưa nhập");
+    setText(entryMode, d.entryId ? "Đang sửa · chưa lưu" : "Số mới · ENTER để lưu");
+    deleteEntryButton.hidden = !d.entryId;
+    cancelEntryButton.hidden = !d.entryId && !d.value;
   }
   let draftScrollFrame = 0;
   function scrollToDraft() {
@@ -962,7 +1053,7 @@
     });
   }
   function appendVirtualKey(key) {
-    if (state.entryDeleting || state.screen !== "book" || state.navigationBusy || dateFlipBusy) return;
+    if (state.screen !== "book" || state.navigationBusy || dateFlipBusy) return;
     const d = draft();
     if (d.replace && key !== "backspace") d.value = "";
     d.replace = false;
@@ -972,12 +1063,9 @@
       const parts = d.value.split(",");
       if (parts.length === 1 ? parts[0].length < 6 : parts[1].length < 2) d.value += key;
     }
-    // A digit only changes the draft, not saved entries or totals.
-    const cell = $("[data-draft]");
-    if (cell) cell.textContent = d.value || "…";
-    else renderGrid();
+    // Capture every key now; paint the notebook once per frame, without scrolling.
     showKgDisplay();
-    scrollToDraft();
+    requestEntryPaint();
   }
   function parseKg(value) {
     const normalized = String(value ?? "").trim().replace(",", ".");
@@ -987,8 +1075,9 @@
   function setEntryBusy(busy) {
     state.saving = busy;
     // Keep digits, Enter and cancel available while the save queue drains.
-    $("#soghi-delete-entry").disabled = busy;
-    $("#book-date")?.toggleAttribute("disabled", busy);
+    if (deleteEntryButton.disabled !== busy) deleteEntryButton.disabled = busy;
+    const date = $("#book-date");
+    if (date && date.disabled !== busy) date.disabled = busy;
   }
   function updateEntrySaveStatus() {
     const status = $("#entry-save-status");
@@ -996,13 +1085,13 @@
     const count = state.entryQueue.length, error = state.entryQueue[0]?.error;
     status.hidden = !count;
     status.classList.toggle("save-error", !!error);
-    $("#entry-save-message").textContent = error ? `${count} số chưa lưu. ${error}` : `Đang lưu ${count} số… Có thể nhập tiếp.`;
+    setText($("#entry-save-message"), error ? `${count} số chưa lưu. ${error}` : `Đang lưu ${count} số… Có thể nhập tiếp.`);
     $("#retry-entry-save").hidden = !error;
     $("#restore-entry-draft").hidden = !error;
     setEntryBusy(state.saving);
   }
   function submitVirtualKg() {
-    if (state.entryDeleting || !state.account || state.screen !== "book" || modal.open || state.picker || state.navigationBusy || dateFlipBusy) return;
+    if (!state.account || state.screen !== "book" || modal.open || state.picker || state.navigationBusy || dateFlipBusy) return;
     const context = bookContext(), current = draft(), kg = parseKg(current.value);
     if (!current.value) return;
     if (kg === null) return showToast("Nhập số kg hợp lệ, tối đa 2 số lẻ; ô trống chưa được lưu.");
@@ -1012,7 +1101,8 @@
     state.entryQueue.push({ context, id: current.entryId || randomId(), entryId: current.entryId, kg, value: current.value, time: new Date(now).toISOString() });
     state.drafts.delete(draftKey(context));
     setEntryBusy(true);
-    renderGrid(); scrollToDraft();
+    showKgDisplay();
+    requestEntryPaint(true, true);
     if (!state.entryQueue[0].error) return flushEntryQueue();
   }
   async function saveQueuedEntry(item) {
@@ -1037,22 +1127,18 @@
     });
   }
   async function flushEntryQueue() {
-    if (state.queueRunning || !state.entryQueue.length) return;
+    if (state.entryDeleting || state.queueRunning || !state.entryQueue.length) return;
     state.queueRunning = true;
     delete state.entryQueue[0].error;
-    setEntryBusy(true); updateEntrySaveStatus();
+    setEntryBusy(true); requestEntryPaint(true);
     try {
       while (state.entryQueue.length) {
         const item = state.entryQueue[0];
         const saved = await saveQueuedEntry(item);
         state.entryQueue.shift();
         state.bookRevision++;
-        if (state.account?.id === item.context.accountId && state.bookData) {
-          const entries = state.bookData.entries;
-          const index = entries.findIndex(entry => entry.id === saved.id);
-          if (index < 0) entries.push(saved); else entries[index] = saved;
-        }
-        if (sameBook(item.context)) { renderGrid(); scrollToDraft(); }
+        applySavedEntry(item, saved);
+        if (sameBook(item.context)) requestEntryPaint(true);
       }
     } catch (error) {
       state.entryQueue[0].error = error.message || "Không thể lưu vào thiết bị. Hãy thử lại.";
@@ -1060,7 +1146,7 @@
     } finally {
       state.queueRunning = false;
       setEntryBusy(state.entryQueue.length > 0);
-      updateEntrySaveStatus();
+      requestEntryPaint(true);
     }
   }
   async function restoreFailedEntry() {
@@ -1084,7 +1170,9 @@
     const context = bookContext(), id = draft().entryId;
     if (!window.confirm("Xóa số kg đang chọn?")) return;
     state.entryDeleting = true;
-    virtualKeyboard.querySelectorAll("button").forEach(button => button.disabled = true);
+    // Start the next draft now; new numbers wait for this delete transaction.
+    state.drafts.delete(draftKey(context));
+    showKgDisplay(); requestEntryPaint(true);
     setEntryBusy(true);
     try {
       await transaction(["entries", "soghi_settlements"], "readwrite", async (tx, request) => {
@@ -1094,25 +1182,56 @@
         if (Ledger.lockedIds({ settlements }).has(id)) throw new Error("Số đã kết sổ không thể xóa.");
         tx.objectStore("entries").delete(id);
       });
-      state.drafts.delete(draftKey(context)); await refreshBook(context); showToast("Đã xóa số kg.");
+      state.bookRevision++;
+      await refreshBook(context); showToast("Đã xóa số kg.");
     } finally {
       state.entryDeleting = false;
-      virtualKeyboard.querySelectorAll("button").forEach(button => button.disabled = false);
       setEntryBusy(state.entryQueue.length > 0);
+      requestEntryPaint(true);
+      if (!state.entryQueue[0]?.error) void flushEntryQueue();
     }
   }
   keyboardToggle.addEventListener("click", () => {
     if (state.picker) { const wasOpen = state.picker.keyboardOpen; closePersonPicker(false); setVirtualKeyboard(!wasOpen); }
     else setVirtualKeyboard(virtualKeyboard.hidden);
   });
-  virtualKeyboard.querySelectorAll("[data-key]").forEach(button => button.addEventListener("click", run(() => {
-    const key = button.dataset.key;
-    return key === "enter" ? submitVirtualKg() : appendVirtualKey(key);
-  })));
+  const keyboardGrid = $(".soghi-keyboard-grid", virtualKeyboard);
+  const keyboardPointers = new Map();
+  const pressVirtualKey = run(key => key === "enter" ? submitVirtualKg() : appendVirtualKey(key));
+  function releaseKeyboardPointer(pointerId) {
+    const button = keyboardPointers.get(pointerId);
+    keyboardPointers.delete(pointerId);
+    if (button && ![...keyboardPointers.values()].includes(button)) button.removeAttribute("data-pressed");
+  }
+  function releaseKeyboardPointers() {
+    for (const pointerId of keyboardPointers.keys()) releaseKeyboardPointer(pointerId);
+  }
+  if ("PointerEvent" in window) {
+    keyboardGrid.addEventListener("pointerdown", event => {
+      const button = event.target.closest("button[data-key]");
+      if (!button || button.disabled || event.button !== 0 || keyboardPointers.has(event.pointerId)) return;
+      // iPhone: accept at contact, before finger drift, pointer cancellation or click delay.
+      event.preventDefault();
+      keyboardPointers.set(event.pointerId, button);
+      button.setAttribute("data-pressed", "");
+      pressVirtualKey(button.dataset.key);
+      try { button.setPointerCapture?.(event.pointerId); } catch { /* A canceled pointer needs no capture. */ }
+    }, { passive: false });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) keyboardGrid.addEventListener(type, event => releaseKeyboardPointer(event.pointerId));
+  }
+  keyboardGrid.addEventListener("click", event => {
+    const button = event.target.closest("button[data-key]");
+    if (!button || button.disabled) return;
+    // Pointer-generated clicks were already accepted on contact; keep AT/keyboard clicks.
+    if ("PointerEvent" in window && (event.detail > 0 || event.pointerType || event.sourceCapabilities?.firesTouchEvents)) { event.preventDefault(); return; }
+    pressVirtualKey(button.dataset.key);
+  });
+  keyboardGrid.addEventListener("contextmenu", event => event.preventDefault());
+  window.addEventListener("blur", releaseKeyboardPointers);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) releaseKeyboardPointers(); });
   $("#soghi-delete-entry").addEventListener("click", run(deleteCurrentEntry));
   $("#soghi-cancel-entry").addEventListener("click", () => {
-    if (state.entryDeleting) return;
-    state.drafts.delete(draftKey()); renderGrid(); scrollToDraft();
+    state.drafts.delete(draftKey()); showKgDisplay(); requestEntryPaint(true);
   });
   document.addEventListener("keydown", run(event => {
     if (state.screen !== "book" || virtualKeyboard.hidden || modal.open || state.picker || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1623,7 +1742,7 @@
         renderAuth();
       }
       if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-        navigator.serviceWorker.register("soghi-sw.js").catch(() => {});
+        navigator.serviceWorker.register("soghi-sw.js", { updateViaCache: "none" }).catch(() => {});
       }
     } catch (error) {
       app.innerHTML = `<main class="auth-screen"><section class="auth-card"><h1>Không thể mở Sổ Ghi</h1><p>${escapeHTML(error.message)}</p><p class="auth-foot">Hãy mở ứng dụng qua localhost hoặc HTTPS, không mở trực tiếp bằng file://.</p></section></main>`;
