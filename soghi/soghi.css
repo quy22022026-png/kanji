@@ -182,19 +182,23 @@ button:disabled { opacity:.55; cursor:wait; }
   padding:8px max(12px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   background:#e4eae3; border-top:1px solid #cbd8cb; border-radius:16px 16px 0 0;
   box-shadow:0 -4px 18px rgba(25,40,30,.12);
+  contain:layout style;
 }
-.soghi-keyboard-tools { display:flex; align-items:center; gap:7px; width:min(100%,560px); min-height:30px; margin:0 auto 5px; font-size:11px; color:#526556; }
-.soghi-keyboard-tools span { flex:1; }
-.soghi-keyboard-tools button { border:0; padding:6px 8px; min-height:32px; border-radius:8px; color:var(--green); background:white; font-size:12px; }
+.soghi-keyboard-tools { display:flex; align-items:center; gap:7px; width:min(100%,560px); height:34px; margin:0 auto 5px; font-size:11px; color:#526556; }
+.soghi-keyboard-tools span { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.soghi-keyboard-tools button { flex-shrink:0; border:0; padding:6px 8px; height:32px; border-radius:8px; color:var(--green); background:white; font-size:12px; }
+/* Reserve tool space so the first digit/Enter cannot move keys under a finger. */
+.soghi-keyboard-tools button[hidden] { display:block !important; visibility:hidden; pointer-events:none; }
 .soghi-keyboard-tools .delete-entry { color:var(--danger); }
-.soghi-display-row { display:flex; align-items:center; gap:8px; width:min(100%,560px); margin:0 auto 7px; }
-.soghi-live-summary { flex:1; white-space:pre-line; font-size:11px; line-height:1.6; color:#516653; }
-.soghi-kg-display { flex:1; min-width:0; min-height:38px; padding:5px 12px; border-radius:10px; background:#fffef8; text-align:right; color:#244b32; font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
-.soghi-keyboard-grid { width:min(100%,560px); margin:auto; display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
-.soghi-keyboard-grid button { height:clamp(42px,5.8dvh,52px); border:0; border-radius:10px; background:white; color:#17231b; font-size:26px; font-weight:600; }
-.soghi-keyboard-grid button:active { background:var(--green-soft); }
+.soghi-display-row { display:flex; align-items:center; gap:8px; width:min(100%,560px); height:42px; margin:0 auto 7px; }
+.soghi-live-summary { flex:1; min-width:0; height:36px; overflow:hidden; white-space:pre-line; font-size:11px; line-height:18px; color:#516653; }
+.soghi-kg-display { flex:1; min-width:0; height:38px; padding:5px 12px; border-radius:10px; background:#fffef8; text-align:right; color:#244b32; font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; }
+.soghi-keyboard-grid { width:min(100%,560px); margin:auto; display:grid; grid-template-columns:repeat(3,1fr); gap:6px; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+.soghi-keyboard-grid button { height:48px; border:0; border-radius:10px; background:white; color:#17231b; font-size:26px; font-weight:600; touch-action:none; }
+.soghi-keyboard-grid button:active, .soghi-keyboard-grid button[data-pressed] { background:var(--green-soft); }
 .soghi-keyboard-grid .key-function { background:#f2f5f0; color:#405247; }
-.soghi-keyboard-grid .key-enter { grid-column:1/-1; height:42px; background:var(--green-2); color:white; font-size:16px; }
+.soghi-keyboard-grid .key-enter { grid-column:1/-1; height:48px; background:var(--green-2); color:white; font-size:16px; }
+.soghi-keyboard-grid .key-enter:active, .soghi-keyboard-grid .key-enter[data-pressed] { background:var(--green); }
 body.entry-active .book-wrap { padding-bottom:calc(var(--soghi-keyboard-height, 0px) + 28px); }
 body.keyboard-open .soghi-toast { bottom:calc(var(--soghi-keyboard-height, 0px) + 9px); }
 .draft-cell { outline:2px dashed var(--green-2); outline-offset:-3px; background:#edf5e9; color:var(--green); }
@@ -255,7 +259,7 @@ details summary { color:var(--green); font-size:12px; cursor:pointer; }
 @media (max-height:600px) and (orientation:landscape) {
   .soghi-keyboard-grid { grid-template-columns:repeat(6,1fr); }
   .soghi-keyboard-grid .key-enter { grid-column:auto; }
-  .soghi-keyboard-grid button { height:40px; }
+  .soghi-keyboard-grid button, .soghi-keyboard-grid .key-enter { height:44px; }
 }
 
 /* Điều hướng gọn và ngày ngắn, ổn định với ô date của Safari/iPhone. */
