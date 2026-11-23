@@ -1,0 +1,52 @@
+SỔ GHI — BẢN SỬA NHẬP NHANH / ENTER
+
+Nguyên nhân
+Bản cũ vô hiệu hóa bàn phím trong lúc lưu và đọc lại toàn bộ dữ liệu.
+Các chữ số bấm ngay sau Enter vì vậy bị bỏ qua.
+
+Đã sửa
+- Enter chụp số hiện tại và mở ngay ô nhập mới; các lần lưu chạy theo thứ tự.
+- Tiếp tục nhận số khi lần lưu trước chưa xong, không xóa số đang gõ tiếp.
+- Enter trên ô trống hoặc giữ phím Enter không tạo bản ghi trùng.
+- Hỗ trợ phím số, dấu phẩy/chấm, Backspace và Enter trên bàn phím máy tính
+  khi bàn phím nhập kg đang mở. Các ô tìm kiếm, ngày và hộp thoại dùng bình thường.
+- Số đang chờ lưu có viền vàng, chưa được tính vào tổng đã lưu.
+- Nếu lưu thất bại, giữ nguyên hàng đợi và hiện “Thử lưu lại” / “Sửa lại số lỗi”.
+- Khi hàng đợi chưa xong, chưa chuyển người/ngày để tránh ghi nhầm sổ.
+
+Tối ưu
+- Gõ một chữ số chỉ cập nhật ô đang nhập, không dựng lại cả bảng.
+- Gộp yêu cầu cuộn vào một khung hình.
+- Sau khi lưu thành công, cập nhật dữ liệu tại chỗ thay vì đọc lại cả tài khoản.
+- Kết quả đọc cũ không ghi đè các số vừa lưu.
+- Tái sử dụng bộ định dạng số; tính ngày ghi gần nhất một lần cho danh sách người.
+- Ngắt bộ theo dõi kích thước của bảng khi về trang chủ.
+- Cache PWA tăng từ v11 lên v12.
+
+Cài bản cập nhật
+1. Nên xuất bản sao lưu JSON từ Cài đặt trước khi cập nhật.
+2. Giải nén và chép tệp vào đúng thư mục đang chạy Sổ Ghi.
+   Bốn tệp thay đổi: soghi.js, soghi.css, soghi-ui.js, soghi-sw.js.
+   Các tệp còn lại được giữ nguyên từ bộ đã cung cấp.
+3. Mở ứng dụng khi có mạng và tải lại trang. Với ứng dụng đã cài trên điện thoại,
+   nếu vẫn hiện bản cũ, đóng ứng dụng rồi mở lại sau khi tải lại trang trực tuyến.
+4. Giữ nguyên tên miền và đường dẫn đang dùng. Không xóa dữ liệu trang web:
+   dữ liệu sổ được lưu trong IndexedDB của trình duyệt tại tên miền đó.
+   Bản sửa này giữ nguyên cấu trúc và phiên bản cơ sở dữ liệu (v3).
+
+Lưu ý sử dụng
+Chờ thông báo “Đang lưu…” biến mất trước khi đóng ứng dụng. Hàng đợi chờ lưu
+được giữ trong phiên đang mở, chưa phải dữ liệu đã lưu bền vững. Trình duyệt có
+hỗ trợ sẽ cảnh báo nếu đóng/tải lại khi còn số chờ lưu. Nếu thiết bị hết dung lượng,
+hãy xử lý lỗi rồi bấm “Thử lưu lại”. “Hủy nhập” chỉ hủy ô đang gõ, không xóa hàng đợi.
+
+Kiểm chứng
+- Đã tái hiện lỗi trên mã gốc bằng chuỗi 12 Enter 34 Enter 56 Enter 7.
+- 15 ca kiểm thử trình duyệt Chromium đạt: chuỗi 150 số, thứ tự và tổng chính xác,
+  giữ số đang gõ khi lưu chậm, Enter liên tiếp, bàn phím vật lý, lỗi ghi và thử lại,
+  khôi phục số lỗi, sửa/xóa, giới hạn số lẻ, chuyển người/ngày, kết quả đọc cũ,
+  bảo vệ số đã kết sổ, nhập trên điện thoại và tải lại dữ liệu.
+- 1 ca PWA đạt: cache v12 đủ 12 tài nguyên, tải lại và nhập bằng cảm ứng ngoại tuyến.
+- Kiểm tra cú pháp JavaScript và JSON manifest đạt.
+- Các phép thử dùng dữ liệu giả trong trình duyệt riêng; không gọi Supabase thật.
+  Luồng đồng bộ với tài khoản Supabase thực tế chưa được kiểm thử.
