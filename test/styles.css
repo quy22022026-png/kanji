@@ -167,6 +167,20 @@ body {
 }
 
 
+/* Keep panning and scrolling available without double-tap or pinch zoom. */
+html, body, .translation-panel {
+  touch-action: pan-x pan-y;
+}
+
+@media (pointer: coarse) {
+  input:is([type="text"], [type="email"], [type="password"], [type="url"], [type="search"], [type="tel"], [type="number"]),
+  textarea,
+  select {
+    font-size: 16px;
+    font-size: max(16px, 1rem);
+  }
+}
+
 @media (max-width: 360px) {
   #modeNav .mode-tab { padding-inline: 0.375rem; }
   #levelPills { max-width: 100%; }
