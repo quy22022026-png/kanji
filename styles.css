@@ -72,6 +72,40 @@ body {
       border-bottom-color: #FB6F92;
     }
 
+    #translateSheet {
+      padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+    }
+
+    .translation-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 0.75rem;
+      max-height: min(70vh, 32rem);
+      max-height: min(70dvh, 32rem);
+      overflow-y: auto;
+    }
+
+    .translation-headword {
+      justify-self: start;
+      min-width: 0;
+      max-width: 100%;
+      padding: 0.375rem 0.625rem;
+      font-size: clamp(1.125rem, 5vw, 1.5rem);
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .translation-details {
+      grid-column: 1 / -1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    #trReading {
+      max-width: 100%;
+    }
+
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     button:focus-visible, [role="button"]:focus-visible, a:focus-visible {
       outline: 3px solid #60A5FA;
@@ -106,6 +140,7 @@ html {
   min-height: 100%;
   min-height: 100svh;
   -webkit-text-size-adjust: 100%;
+  overflow-x: clip;
 }
 
 body {
@@ -131,6 +166,25 @@ body {
   }
 }
 
+
+/* Keep panning and scrolling available without double-tap or pinch zoom. */
+html, body, .translation-panel {
+  touch-action: pan-x pan-y;
+}
+
+@media (pointer: coarse) {
+  input:is([type="text"], [type="email"], [type="password"], [type="url"], [type="search"], [type="tel"], [type="number"]),
+  textarea,
+  select {
+    font-size: 16px;
+    font-size: max(16px, 1rem);
+  }
+}
+
+@media (max-width: 360px) {
+  #modeNav .mode-tab { padding-inline: 0.375rem; }
+  #levelPills { max-width: 100%; }
+}
 
 /* Phase 8 — minimal swipe-first Flashcard */
 .nav-icon { display:inline-flex; width:18px; height:18px; align-items:center; justify-content:center; flex:none; }
