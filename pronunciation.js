@@ -157,6 +157,7 @@
     }
 
     return Object.freeze({
+      destroy() {stop(); revokeCache();},
       speak,
       speakWord,
       speakKana,
