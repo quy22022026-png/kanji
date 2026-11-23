@@ -131,6 +131,23 @@
     }
 
 
+    // Safari can emit gesture events even when the viewport disables user zoom.
+    const cancelZoom = event => {
+      if (event.cancelable) event.preventDefault();
+    };
+    const cancelPinch = event => {
+      if (event.touches?.length > 1) cancelZoom(event);
+    };
+    const zoomHandlers = [
+      ['gesturestart',cancelZoom],
+      ['gesturechange',cancelZoom],
+      ['touchmove',cancelPinch]
+    ];
+    for (const [type,handler] of zoomHandlers) {
+      document.addEventListener(type,handler,{passive:false});
+      scope.add(() => document.removeEventListener(type,handler));
+    }
+
     registerModule({id:'quiz',label:'Trắc nghiệm',icon:'📝',render: quizView.renderQuizModule});
     registerModule({id:'weak-words',label:'Sổ từ yếu',icon:'📕',render: quizView.renderWeakWordsModule});
     document.querySelectorAll('.mode-tab').forEach(btn => scope.bind(btn, 'onclick', () => {flashcardView.cancelCardMove(); events.emit('audio:stop'); hideTranslateSheet(); routing.activate(btn.dataset.mode);}));
