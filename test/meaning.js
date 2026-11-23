@@ -107,6 +107,146 @@
     }
     return best;
   }
+  function verbMeaning(meaning,form) {
+    const gloss = meaning.split(';')[0].trim();
+    const word = gloss.charAt(0).toLocaleLowerCase('vi') + gloss.slice(1);
+    switch (form) {
+      case 'past':
+      case 'past-polite':
+        return `Đã ${word}`;
+      case 'negative':
+      case 'negative-polite':
+        return `Không ${word}`;
+      case 'past-negative':
+      case 'past-negative-polite':
+        return `Đã không ${word}`;
+      default:
+        return meaning;
+    }
+  }
+
+  const FIXED_EXPRESSIONS = [
+    ['ごちそうさまでした','ごちそうさまでした','Cảm ơn vì bữa ăn'],
+    ['ご馳走様でした','ごちそうさまでした','Cảm ơn vì bữa ăn'],
+    ['お疲れ様でした','おつかれさまでした','Cảm ơn bạn đã vất vả']
+  ];
+
+  function adjectiveInflections(term, entry) {
+    if (!/tính từ (?:đuôi )?い|i-adjective/i.test(entry.pos || '') || !term.endsWith('い')) return [];
+    const stem = term === 'いい' ? 'よ' : term.slice(0,-1);
+    const reading = entry.reading || term;
+    const kanaStem = reading === 'いい' ? 'よ' : reading.slice(0,-1);
+    const gloss = entry.meaning.trim();
+    const negativeGloss = gloss.split(';').map(sense => {
+      const word = sense.trim();
+      return 'không '+word.charAt(0).toLocaleLowerCase('vi')+word.slice(1);
+    }).join(' / ');
+    const negation = negativeGloss.charAt(0).toLocaleUpperCase('vi')+negativeGloss.slice(1);
+    const base = entry.text || term;
+    const forms = [
+      [term, reading, gloss, 'Lịch sự'],
+      [stem+'かった', kanaStem+'かった', gloss, 'Quá khứ'],
+      [stem+'くない', kanaStem+'くない', negation, 'Phủ định'],
+      [stem+'くなかった', kanaStem+'くなかった', negation, 'Phủ định quá khứ']
+    ];
+    return forms.flatMap(([text,kana,meaning,kind],i) => {
+      const note = `${kind} · Từ gốc: ${base}`;
+      const form = {...entry, text, reading:kana, meaning, base, note};
+      const polite = {...form, text:text+'です', reading:kana+'です', meaning:meaning+' ạ'};
+      return i ? [form,polite] : [polite];
+    });
+  }
+
+  const workerURL = typeof document === 'object' && document.currentScript
+    ? new URL('japanese-worker.js', document.currentScript.src)
+    : './japanese-worker.js';
+
+  function createAnalyzer() {
+    const cache = new Map();
+    const pending = new Map();
+    const bySentence = new Map();
+    let worker;
+    let sequence = 0;
+    let closed = false;
+    let retryAfter = 0;
+
+    function stop() {
+      worker?.terminate();
+      worker = null;
+      for (const request of pending.values()) {
+        clearTimeout(request.timer);
+        request.resolve(null);
+      }
+      pending.clear();
+      bySentence.clear();
+    }
+
+    function failed() {
+      retryAfter = Date.now()+15000;
+      stop();
+    }
+
+    function analyze(sentence) {
+      if (closed) return Promise.resolve(null);
+      if (cache.has(sentence)) return Promise.resolve(cache.get(sentence));
+      if (bySentence.has(sentence)) return bySentence.get(sentence);
+      if (Date.now() < retryAfter || typeof Worker !== 'function' || !sentence) return Promise.resolve(null);
+      if (!worker) {
+        try {
+          worker = new Worker(workerURL);
+        } catch {
+          failed();
+          return Promise.resolve(null);
+        }
+        worker.onerror = failed;
+        worker.onmessage = ({data}) => {
+          if (data.error || !Array.isArray(data.parts)) { failed(); return; }
+          const request = pending.get(data.id);
+          if (!request) return;
+          clearTimeout(request.timer);
+          pending.delete(data.id);
+          bySentence.delete(request.sentence);
+          cache.set(request.sentence,data.parts);
+          if (cache.size > 150) cache.delete(cache.keys().next().value);
+          request.resolve(data.parts);
+        };
+      }
+      const id = ++sequence;
+      const result = new Promise(resolve => {
+        pending.set(id,{sentence,resolve,timer:setTimeout(failed,60000)});
+      });
+      bySentence.set(sentence,result);
+      try { worker.postMessage({id,sentence}); } catch { failed(); }
+      return result;
+    }
+    return {
+      analyze,
+      cached: sentence => cache.get(sentence),
+      destroy() {
+        closed = true;
+        cache.clear();
+        stop();
+      }
+    };
+  }
+
+  function alignMorphology(source, parts) {
+    if (!parts?.length) return null;
+    const spans = new Map();
+    let start = 0;
+    for (const part of parts) {
+      if (!part.text || !source.startsWith(part.text,start)) return null;
+      const end = start + part.text.length;
+      spans.set(start,{...part,end});
+      start = end;
+    }
+    return start === source.length ? spans : null;
+  }
+
+  function hiragana(reading = '') {
+    return reading.replace(/[ァ-ヶ]/g,char => String.fromCharCode(char.charCodeAt(0)-0x60));
+  }
+
   const IDIOMS = Object.freeze([
     ['腹が立つ','はらがたつ','Tức giận; nổi giận','Động từ nhóm 1'],
     ['役に立つ','やくにたつ','Có ích; hữu ích','Động từ nhóm 1'],
@@ -131,6 +271,8 @@
     let dictionary = new Map();
     const getDictionaryIndex = options.getDictionaryIndex || (() => dictionary);
     const formsByDictionary = new WeakMap();
+    const analyzer = createAnalyzer();
+    const sentenceRenders = new WeakMap();
     const lookup = options.lookup || ((token, parentWord) => getDictionaryIndex().get(token) || (parentWord && [parentWord.kanji,parentWord.kana].includes(token) ? {text:token,reading:parentWord.kana,hanViet:parentWord.hanViet || '',meaning:parentWord.meaning,level:parentWord.level,note:`Thuộc từ: ${parentWord.kanji}`} : {
       text: token, reading: token, hanViet: '',
       meaning: 'Chưa có trong từ điển hiện tại',
@@ -214,6 +356,9 @@
         }
       });
 
+      for (const [text,reading,meaning] of FIXED_EXPRESSIONS) {
+        if (!index.has(text)) index.set(text,{text,reading,meaning,note:'Lời nói cố định'});
+      }
       const forms = new Map();
       function addForm(text,entry,form) {
         if (!forms.has(text)) forms.set(text,[]);
@@ -221,6 +366,9 @@
       }
       for (const [term,entry] of [...index]) {
         if (entry.fragment || typeof entry.meaning !== 'string' || !entry.meaning.trim()) continue;
+        for (const form of adjectiveInflections(term,entry)) {
+          if (!index.has(form.text)) index.set(form.text,form);
+        }
         // Some vocabulary rows list a verbal noun such as 勉強 with POS “nhóm 3”.
         const isSuruNoun = verbClass(entry.pos) === 'irregular' && !term.endsWith('する') && /danh từ/i.test(entry.pos);
         const base = term === entry.reading && entry.text ? entry.text : term;
@@ -236,7 +384,9 @@
           if (form === 'negative' && text.endsWith('ない')) {
             addForm(text.slice(0,-1),{...inflected,reading:kana.slice(0,-1)},'negative-stem');
           }
-          if (form !== 'stem' && !index.has(text)) index.set(text,{...inflected,reading:kana || text});
+          if (form !== 'stem' && !index.has(text)) {
+            index.set(text,{...inflected,reading:kana || text,meaning:verbMeaning(entry.meaning,form)});
+          }
         }
       }
       formsByDictionary.set(index,forms);
@@ -258,14 +408,21 @@
     if (segmenter === undefined) {
       try {segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ja',{granularity:'word'}) : null;} catch {segmenter = null;}
     }
-    function tokenize(sentence) {
+    function tokenize(sentence, parts) {
       const source = String(sentence || '');
+      const morphology = alignMorphology(source,parts);
       const lexicon = getDictionaryIndex() || new Map();
       const forms = formsByDictionary.get(lexicon) || new Map();
       const maxLength = getDictionaryMaxLength(lexicon);
       const segmentEnds = new Map();
       const boundaries = new Set([0,source.length]);
-      if (segmenter) {
+      if (morphology) {
+        for (const [start,part] of morphology) {
+          segmentEnds.set(start,part.end);
+          boundaries.add(start);
+          boundaries.add(part.end);
+        }
+      } else if (segmenter) {
         for (const {index,segment} of segmenter.segment(source)) {
           segmentEnds.set(index,index+segment.length);
           boundaries.add(index);
@@ -275,24 +432,45 @@
 
       const separator = /^[\p{P}\p{Z}\s\p{S}]$/u;
       const charAt = index => String.fromCodePoint(source.codePointAt(index));
-      function matchAt(start) {
+      function supportsLemma(start,end,base) {
+        if (!morphology || !base) return true;
+        let cursor = start;
+        while (cursor < end) {
+          const part = morphology.get(cursor);
+          if (!part) return false;
+          if (part.lemma) {
+            const lemma = source.slice(start,cursor)+part.lemma;
+            const entry = lexicon.get(lemma);
+            if (lemma === base || entry?.text === base ||
+                (entry && entry.text === lexicon.get(base)?.text)) return true;
+          }
+          cursor = part.end;
+        }
+        return false;
+      }
+
+      function matchAt(start,allowDerived = true) {
         let best = null;
         for (let length = Math.min(maxLength,source.length-start); length > 0; length--) {
           const text = source.slice(start,start+length);
           const entry = lexicon.get(text);
-          if (entry && !entry.fragment && (!best || length > best.text.length)) {
+          if (entry && !entry.fragment && (allowDerived || !entry.base) &&
+              (!best || length > best.text.length)) {
             const end = start+length;
             const insideWord = end < (segmentEnds.get(start) || 0);
             const complete = boundaries.has(end) && (length > 1 || boundaries.has(start));
-            if (!segmenter || (!insideWord && (complete || entry.base || entry.grammar))) {
-              best = {text,punct:false,known:true,base:entry.base || text};
-            }
+            const matches = morphology
+              ? complete && supportsLemma(start,end,entry.base)
+              : !segmenter || (!insideWord && (complete || entry.base || entry.grammar));
+            if (matches) best = {text,punct:false,known:true,base:entry.base || text};
           }
+          if (!allowDerived) continue;
           for (const candidate of forms.get(text) || []) {
             const phrase = phraseEntry(source,start,text,candidate.entry,candidate.form);
             if (!phrase) continue;
             const end = start+phrase.text.length;
-            if (segmenter && !boundaries.has(end)) continue;
+            if ((morphology || segmenter) && !boundaries.has(end)) continue;
+            if (!supportsLemma(start,start+text.length,phrase.base)) continue;
             const preferredBase = entry?.base;
             const sameLength = best?.text.length === phrase.text.length;
             if (!best || phrase.text.length > best.text.length ||
@@ -319,8 +497,28 @@
           cursor += known.text.length;
           continue;
         }
+        const part = morphology?.get(cursor);
+        if (part) {
+          let end = part.end;
+          let reading = hiragana(part.reading || part.text);
+          let suffix;
+          while ((suffix = morphology.get(end)) && ['動詞','形容詞','助動詞'].includes(part.pos) &&
+                 (suffix.pos === '助動詞' || (suffix.detail === '接続助詞' && /^[てで]$/u.test(suffix.text)))) {
+            end = suffix.end;
+            reading += hiragana(suffix.reading || suffix.text);
+          }
+          const text = source.slice(cursor,end);
+          const root = part.lemma && lexicon.get(part.lemma);
+          const hasGloss = Boolean(root?.meaning && !root.fragment && !root.base && end === part.end);
+          const entry = hasGloss
+            ? {...root,text,reading,base:part.lemma,note:`Từ gốc: ${part.lemma}`}
+            : {text,reading,meaning:'Chưa có nghĩa cho cụm này',note:part.lemma ? `Từ gốc: ${part.lemma}` : ''};
+          tokens.push({text,punct:false,known:hasGloss,base:part.lemma || undefined,entry});
+          cursor = end;
+          continue;
+        }
         let end = segmentEnds.get(cursor) || cursor+char.length;
-        while (end < source.length && !matchAt(end)) {
+        while (end < source.length && !matchAt(end,false)) {
           const next = charAt(end);
           if (separator.test(next)) break;
           if (segmenter && !/^[\p{Script=Hiragana}ー]$/u.test(next)) break;
@@ -370,18 +568,45 @@
       return ruby;
     }
 
-    function renderSentence(container, sentence, parentWord = null) {
+    function renderSentence(container, sentence, parentWord = null, {analyze = true} = {}) {
       if (!container) return;
-      container.replaceChildren();
-      tokenize(sentence).forEach(token => {
-        if (token.punct) {
-          container.appendChild(document.createTextNode(token.text));
-        } else {
-          container.appendChild(createTapToken(token.text, token.text, parentWord, {
-            underline: token.known,
-            entry: token.entry
-          }));
+      const ticket = {};
+      sentenceRenders.set(container,ticket);
+
+      function render(tokens) {
+        const fragment = document.createDocumentFragment();
+        for (const token of tokens) {
+          if (token.punct) {
+            fragment.appendChild(document.createTextNode(token.text));
+          } else {
+            fragment.appendChild(createTapToken(token.text, token.text, parentWord, {
+              underline: token.known,
+              entry: token.entry || (token.known ? null : {
+                text:token.text, reading:token.text, meaning:'Chưa có nghĩa cho cụm này'
+              })
+            }));
+          }
         }
+        container.replaceChildren(fragment);
+      }
+
+      const cached = analyzer.cached(sentence);
+      render(tokenize(sentence,cached));
+      if (cached) {
+        container.dataset.japaneseAnalysis = 'ready';
+        return;
+      }
+      if (!analyze) {
+        container.dataset.japaneseAnalysis = 'idle';
+        return;
+      }
+      container.dataset.japaneseAnalysis = 'loading';
+      analyzer.analyze(sentence).then(parts => {
+        if (sentenceRenders.get(container) !== ticket) return;
+        container.dataset.japaneseAnalysis = parts ? 'ready' : 'fallback';
+        if (!parts) return;
+        if (container.querySelector('.tap-token.is-active')) hidePopup();
+        render(tokenize(sentence,parts));
       });
     }
 
@@ -425,6 +650,8 @@
       lookup: (token,parentWord) => ({...lookup(token,parentWord)}), getIndex: () => new Map([...getDictionaryIndex()].map(([key,value]) => [key,{...value}])), speakActive: () => onSpeak(activeSpeakText),
       buildDictionaryIndex,
       tokenize,
+      analyzeSentence: analyzer.analyze,
+      destroy: analyzer.destroy,
       createTapToken,
       createRubyToken,
       renderSentence,
