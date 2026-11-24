@@ -69,7 +69,7 @@
         if (['INPUT','TEXTAREA','SELECT','BUTTON'].includes(document.activeElement?.tagName)) return;
         if (d.routing.getMode() === 'kana') {d.kana.handleKey(e);return;}
         if (d.routing.getMode() !== 'flashcard') return;
-        const v = d.flashcardView.getSnapshot(); if (!v.fcDeck.length) return;
+        const v = d.flashcardView.getSnapshot(); if (!v.lessonStudying || !v.fcDeck.length) return;
         if (e.code === 'Space') {e.preventDefault();d.flashcardView.flipFlashcard();}
         else if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') {e.preventDefault();const right=e.code === 'ArrowRight'; if (v.prefs.fcFilter === 'SMART') void d.flashcardView.handleFlashcardRating(right?'good':'again'); else d.flashcardView.moveCard(right?1:-1);}
         else if (['1','2','3'].includes(e.key)) void d.flashcardView.handleFlashcardRating({1:'again',2:'hard',3:'good'}[e.key]);
