@@ -10,6 +10,7 @@
     const safeGetLS = database.getLocalJSON, safeSetLS = database.setLocalJSON;
 
     let disposed = false;
+    let syncRequest = null;
     async function applyDataset(dataset, persist = true, preservePrefs = false) {
       if (disposed) throw new Error('Data source đã dừng.');
       const checked = vocabulary.validate(dataset);
@@ -25,8 +26,8 @@
       for (const [kind, value] of Object.entries(dataset.meta?.supplemental || {})) if (value?.available) supplemental[kind] = value;
       const next = {...dataset, meta:{...dataset.meta, supplemental}};
       const result = await vocabulary.apply(next,persist,{notify:false});
-      if (!next.words.some(w => w.level === preferences.getSnapshot().level)) {
-        const first = LEVELS.find(level => next.words.some(w => w.level === level));
+      if (!result.words.some(w => w.level === preferences.getSnapshot().level)) {
+        const first = LEVELS.find(level => result.words.some(w => w.level === level));
         if (first) preferences.set('level',first);
       }
       if (!preservePrefs) preferences.set('topic','ALL');
@@ -36,7 +37,8 @@
       return result;
     }
     async function syncFromGoogleSheets({ silent = false } = {}) {
-      const rawUrl = $('sheetUrlInput').value.trim() || safeGetLS(STORAGE_SHEET_KEY, DEFAULT_SHEET_URL);
+      if (disposed || (silent && syncRequest)) return false;
+      const rawUrl = silent ? safeGetLS(STORAGE_SHEET_KEY,DEFAULT_SHEET_URL) : $('sheetUrlInput').value.trim();
       if (!rawUrl) {
         if (!silent) showToast('Hãy dán link Google Sheets trước khi đồng bộ.', 'error');
         return false;
@@ -46,20 +48,24 @@
         return false;
       }
 
-      const selectedLevels = Array.from(document.querySelectorAll('.sheet-lvl:checked')).map(el => el.value);
       const configuredLevels = Array.isArray(state.prefs.sheetLevels) && state.prefs.sheetLevels.length ? state.prefs.sheetLevels : ['N5', 'N4', 'N3'];
-      const levelsToFetch = selectedLevels.length ? selectedLevels : configuredLevels;
-      safeSetLS(STORAGE_SHEET_KEY, rawUrl);
-      preferences.update({ sheetLevels: [...levelsToFetch] }, { persist: true });
+      const levelsToFetch = silent ? configuredLevels : Array.from(document.querySelectorAll('.sheet-lvl:checked'),el => el.value);
+      if (!levelsToFetch.length) {
+        showToast('Hãy chọn ít nhất một cấp JLPT để đồng bộ.', 'warning');
+        return false;
+      }
 
       const btn = $('btnSyncGoogleSheet');
+      if (syncRequest) sheets.cancelPending();
+      const request = {};
+      syncRequest = request;
       if (!silent) btn.disabled = true;
       $('badgeSheetStatus').textContent = silent ? 'Đang kiểm tra nền...' : 'Đang tải...';
 
       try {
         // Sheets module validates every requested JLPT tab before any dataset is applied.
         const result = await sheets.fetchDataset({ url: rawUrl, levels: levelsToFetch });
-        if (disposed) return false;
+        if (disposed || syncRequest !== request) return false;
         const previousSupplemental = state.datasetMeta?.supplemental || {};
         const supplemental = {
           dictionary: result.supplemental.dictionary.available
@@ -78,6 +84,11 @@
         const previousFingerprint = `${state.words.length}:${state.words[0]?.id}:${state.words[state.words.length - 1]?.id}`;
         const nextFingerprint = `${result.words.length}:${result.words[0]?.id}:${result.words[result.words.length - 1]?.id}`;
         await applyDataset(dataset, true, silent);
+        if (disposed || syncRequest !== request) return false;
+        if (!silent) {
+          safeSetLS(STORAGE_SHEET_KEY,rawUrl);
+          preferences.update({sheetLevels:levelsToFetch},{persist:true});
+        }
 
         const dictionaryCount = supplemental.dictionary?.entries?.length || 0;
         const variantCount = supplemental.variants?.entries?.length || 0;
@@ -97,13 +108,16 @@
         }
         return true;
       } catch (err) {
-        if (disposed) return false;
+        if (disposed || syncRequest !== request) return false;
         $('badgeSheetStatus').textContent = silent ? 'Dùng bản đã lưu' : 'Lỗi đồng bộ';
         if (!silent) showToast(err.message, 'error');
         console.error('[Kawaii Sheets] Đồng bộ thất bại; bộ dữ liệu hiện tại không bị thay thế:', err);
         return false;
       } finally {
-        if (!silent) btn.disabled = false;
+        if (syncRequest === request) {
+          syncRequest = null;
+          btn.disabled = false;
+        }
       }
     }
 
