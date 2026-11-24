@@ -146,11 +146,12 @@
 
     function renderWeakWordsModule(sectionEl) {
       if (!weakWords) return;
-      const records = weakWords.getWeak();
-      const summary = weakWords.getSummary();
-      const cards = records.map(record => {
-        const word = state.wordMap.get(record.wordId);
-        if (!word) return '';
+      const wordMap = state.wordMap;
+      const records = weakWords.getAll().filter(record => wordMap.has(record.wordId));
+      const weakRecords = records.filter(record => record.status === 'weak');
+      const errors = records.reduce((sum,record) => sum + (Number(record.errorCount) || 0),0);
+      const cards = weakRecords.map(record => {
+        const word = wordMap.get(record.wordId);
         return `<article class="rounded-2xl border border-[#F1D6D9] bg-white p-4 flex flex-col gap-2">
           <div class="flex items-start justify-between gap-2">
             <div><p class="text-xl font-extrabold font-jp">${escapeHtml(word.kanji || word.kana)}</p><p class="text-xs text-[#786D69]">${escapeHtml(word.kana || '')} · ${escapeHtml(word.romaji || '')}</p></div>
@@ -165,11 +166,11 @@
         <div class="bg-white border border-[#F1ECE6] rounded-3xl p-4 sm:p-6 shadow-soft flex flex-col gap-4">
           <div><h2 class="text-lg font-extrabold text-[#332E2E]">📕 Sổ từ yếu</h2><p class="text-sm text-[#786D69] mt-1">Tự động thêm từ khi có ít nhất 2 lỗi cộng dồn từ Flashcard và Quiz.</p></div>
           <div class="grid grid-cols-3 gap-2 text-center">
-            <div class="rounded-2xl bg-[#FFF1F2] p-3"><p class="text-xs text-[#786D69]">Từ yếu</p><p class="text-xl font-extrabold">${summary.weak}</p></div>
-            <div class="rounded-2xl bg-[#F8F5FF] p-3"><p class="text-xs text-[#786D69]">Từ đã theo dõi</p><p class="text-xl font-extrabold">${summary.totalTracked}</p></div>
-            <div class="rounded-2xl bg-[#FFF7ED] p-3"><p class="text-xs text-[#786D69]">Tổng lỗi</p><p class="text-xl font-extrabold">${summary.errors}</p></div>
+            <div class="rounded-2xl bg-[#FFF1F2] p-3"><p class="text-xs text-[#786D69]">Từ yếu</p><p class="text-xl font-extrabold">${weakRecords.length}</p></div>
+            <div class="rounded-2xl bg-[#F8F5FF] p-3"><p class="text-xs text-[#786D69]">Từ đã theo dõi</p><p class="text-xl font-extrabold">${records.length}</p></div>
+            <div class="rounded-2xl bg-[#FFF7ED] p-3"><p class="text-xs text-[#786D69]">Tổng lỗi</p><p class="text-xl font-extrabold">${errors}</p></div>
           </div>
-          ${cards ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>` : '<div class="rounded-2xl bg-[#ECFDF5] p-5 text-center text-sm font-bold text-[#047857]">Chưa có từ yếu. Tiếp tục học và làm trắc nghiệm để hệ thống đánh giá tự động.</div>'}
+          ${cards ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>` : '<div class="rounded-2xl bg-[#ECFDF5] p-5 text-center text-sm font-bold text-[#047857]">Chưa có từ yếu trong bộ từ vựng hiện tại.</div>'}
         </div>`;
       sectionEl.querySelectorAll('[data-dismiss-weak]').forEach(button => {
         button.addEventListener('click', () => {
