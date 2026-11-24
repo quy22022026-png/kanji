@@ -9,13 +9,13 @@
       if (!item || typeof item !== 'object') throw new TypeError(`Dòng ${index+1} không hợp lệ.`);
       if (!String(item.id || '').trim()) throw new Error(`Dòng ${index+1}: thiếu ID cố định.`);
       return {
-        id: String(item.id).trim(), level: String(item.level || 'N5').toUpperCase(),
+        id: String(item.id).trim(), level: String(item.level || '').trim().toUpperCase() || 'N5',
         kanji: String(item.kanji || item.word || '').trim(),
         kana: String(item.kana || item.reading || item.kanji || '').trim(),
         furigana: String(item.furigana || item.kana || item.reading || item.kanji || '').trim(),
         romaji: String(item.romaji || '').trim(), hanViet: String(item.hanViet || item.han_viet || '').trim(),
         meaning: Array.isArray(item.meanings) ? item.meanings.join('; ') : String(item.meaning || '').trim(),
-        pos: String(item.pos || '').trim(), topic: String(item.topic || 'Chung').trim(),
+        pos: String(item.pos || '').trim(), topic: String(item.topic || '').trim() || 'Chung',
         example: item.example?.ja ? {ja:String(item.example.ja),romaji:String(item.example.romaji || ''),vi:String(item.example.vi || '')} : null
       };
     });
