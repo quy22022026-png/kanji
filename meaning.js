@@ -318,6 +318,7 @@
     const onSpeak = options.onSpeak || (() => {});
     const getElements = options.getElements || (() => ({}));
     let activeSpeakText = '';
+    let activeSpeakGuide;
     let cachedDictionaryRef = null;
     let cachedDictionarySize = -1;
     let cachedDictionaryMaxLength = 8;
@@ -711,8 +712,9 @@
           : note;
       }
       activeSpeakText = pronunciationText(info,token);
+      activeSpeakGuide = {surface:token,example:parentWord?.example?.ja};
       if (elements.sheet) elements.sheet.classList.remove('hidden');
-      onSpeak(activeSpeakText);
+      speakActive();
       return info;
     }
 
@@ -726,13 +728,17 @@
       return activeSpeakText;
     }
 
+    function speakActive() {
+      return onSpeak(activeSpeakText,activeSpeakGuide);
+    }
+
     function rebuildIndex() {
       if (options.vocabulary) dictionary = buildDictionaryIndex({builtinDictionary:options.builtinDictionary, words:options.vocabulary.getAll(), supplemental:options.vocabulary.getMeta().supplemental || {}});
     }
     options.events?.on('vocabulary:changed',rebuildIndex);
     rebuildIndex();
     return Object.freeze({
-      lookup: (token,parentWord) => ({...lookup(token,parentWord)}), getIndex: () => new Map([...getDictionaryIndex()].map(([key,value]) => [key,{...value}])), speakActive: () => onSpeak(activeSpeakText),
+      lookup: (token,parentWord) => ({...lookup(token,parentWord)}), getIndex: () => new Map([...getDictionaryIndex()].map(([key,value]) => [key,{...value}])), speakActive,
       buildDictionaryIndex,
       tokenize,
       analyzeSentence: analyzer.analyze,
