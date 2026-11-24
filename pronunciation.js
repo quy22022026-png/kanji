@@ -25,9 +25,10 @@
     if (!mora) return {engineText:text,fallbackText:text};
     const katakana = mora.replace(/[ぁ-ゔ]/gu,
       char => String.fromCharCode(char.charCodeAt(0)+0x60));
+    const pause = mora.length > 1 ? '。' : '、';
     return {
       engineText:mora,
-      fallbackText:sample ? `${katakana}、${sample}。` : katakana,
+      fallbackText:sample ? `${katakana}${pause}${sample}。` : katakana,
       mora
     };
   }
