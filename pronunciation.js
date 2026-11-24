@@ -7,28 +7,28 @@
   'use strict';
 
   const MODERN_READINGS = Object.freeze({を:'お',ぢ:'じ',づ:'ず'});
+  const LOAN_MORAS = new Set(
+    'うぉ うぇ うぃ いぇ ゔぁ ゔぃ ゔぇ ゔぉ ゔゃ ゔゅ ゔょ ふぁ ふぃ ふぇ ふぉ てぃ でぃ とぅ どぅ てゃ てゅ てょ でゃ でゅ でょ つぁ つぃ つぇ つぉ しぇ じぇ ちぇ すぃ ずぃ きぇ ぎぇ にぇ ひぇ びぇ ぴぇ みぇ りぇ くゎ ぐゎ'.split(' ')
+  );
 
   function singleMora(value) {
-    const kana = value.normalize('NFKC').replace(/[ァ-ン]/gu,
+    const kana = value.normalize('NFKC').replace(/[ァ-ヶ]/gu,
       char => String.fromCharCode(char.charCodeAt(0)-0x60));
     // Exclude standalone small kana and っ, which are not taught as standalone sounds.
-    const basic = /^[あ-ん]$/u.test(kana) && !'ぁぃぅぇぉっゃゅょゎ'.includes(kana);
-    const combined = /^[きぎしじちにひびぴみり][ゃゅょ]$/u.test(kana);
+    const basic = /^[あ-んゔ]$/u.test(kana) && !'ぁぃぅぇぉっゃゅょゎ'.includes(kana);
+    const combined = /^[きぎしじちにひびぴみり][ゃゅょ]$/u.test(kana) || LOAN_MORAS.has(kana);
     return basic || combined ? MODERN_READINGS[kana] || kana : '';
   }
 
   function pronunciationRequest(text, sample) {
     const mora = singleMora(text);
     if (!mora) return {engineText:text,fallbackText:text};
-    const katakana = mora.replace(/[ぁ-ん]/gu,
+    const katakana = mora.replace(/[ぁ-ゔ]/gu,
       char => String.fromCharCode(char.charCodeAt(0)+0x60));
-    // For a sound with an example, apply the reading to a dedicated cue only.
-    // The ZEN dictionary substitutes the cue before synthesis and leaves the example intact.
-    const surface = sample ? '練習用単音' : mora;
     return {
-      engineText:sample ? `${surface}。${sample}。` : surface,
-      fallbackText:sample ? `${katakana}。${sample}。` : katakana,
-      reading:{surface,reading:mora,accent:0}
+      engineText:mora,
+      fallbackText:sample ? `${katakana}、${sample}。` : katakana,
+      mora
     };
   }
 
@@ -85,10 +85,10 @@
       }
     }
 
-    function makeCacheKey(input, prefs, isolatedWord, guide) {
+    function makeCacheKey(input, prefs, isolatedWord, spelling, sample) {
       return JSON.stringify([
         prefs.zenSpeed ?? 1, prefs.zenPitch ?? 0, prefs.zenHappy ?? 60,
-        input.engineText, input.reading?.reading ?? null, isolatedWord, guide
+        input.engineText, input.mora ?? null, isolatedWord, spelling, sample
       ]);
     }
 
@@ -99,13 +99,10 @@
       stop();
       const request = requestId;
       const input = pronunciationRequest(phrase,kanaSample);
-      const settings = { ...getPrefs(), ...(customPrefs || {}) };
-      const isolatedWord = !kanaSample && (wordMode || !!input.reading);
+      const prefs = { ...getPrefs(), ...(customPrefs || {}) };
       const surface = String(wordGuide?.surface || '').trim();
-      const example = String(wordGuide?.example || '').trim();
-      const hasWordSpelling = !input.reading || /\p{Script=Han}/u.test(surface);
-      const guide = isolatedWord && hasWordSpelling && (surface || example) ? {surface,example} : null;
-      const prefs = input.reading && !guide ? {...settings, zenHappy:0} : settings;
+      const spelling = /\p{Script=Han}/u.test(surface) ? surface : '';
+      const isolatedWord = !kanaSample && wordMode;
       const engine = getEngine();
 
       if (!engine) {
@@ -116,15 +113,16 @@
         return { ok: false, reason: 'engine-unavailable' };
       }
 
-      const cacheKey = makeCacheKey(input, prefs, isolatedWord, guide);
+      const cacheKey = makeCacheKey(input, prefs, isolatedWord, spelling, kanaSample);
       try {
         if (!wavCache.has(cacheKey)) {
           const task = synthesisQueue.then(async () => {
             if (request !== requestId || engine !== getEngine()) return;
             const result = await engine.speak(input.engineText, {
-              ...(input.reading ? {dict:[input.reading]} : {}),
+              ...(input.mora ? {kanaMora:input.mora} : {}),
+              ...(kanaSample ? {kanaSample} : {}),
               ...(isolatedWord ? {isolatedWord:true} : {}),
-              ...(guide ? {wordGuide:guide} : {}),
+              ...(spelling ? {wordSpelling:spelling} : {}),
               emotion: {
                 happy: Number(prefs.zenHappy ?? 60),
                 neutral: 100 - Number(prefs.zenHappy ?? 60)
@@ -168,9 +166,7 @@
     }
 
     function speakWord(word, customPrefs = null) {
-      return speakTerm(word?.kana || word?.kanji, customPrefs, {
-        surface:word?.kanji, example:word?.example?.ja
-      });
+      return speakTerm(word?.kana || word?.kanji, customPrefs, {surface:word?.kanji});
     }
 
     function speakTerm(text, customPrefs = null, wordGuide) {
@@ -181,7 +177,7 @@
       const text = String(kana || '').trim();
       const mora = singleMora(text) || singleMora(String(phoneticInfo?.clearMora || '').trim());
       const sample = mode === 'with-word' && mora ? String(phoneticInfo?.sampleJa || '').trim() : '';
-      return play(mora || text,{...customPrefs,zenHappy:0},{kanaSample:sample,wordMode:true});
+      return play(mora || text,customPrefs,{kanaSample:sample});
     }
 
     return Object.freeze({
