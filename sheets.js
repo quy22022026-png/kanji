@@ -183,7 +183,11 @@
     const seenTerms = new Map();
     const seenIds = new Set();
     const duplicates = [];
+    const mergedTerms = [];
     const normalizeGloss = value => value.normalize('NFC').replace(/\s+/gu,' ');
+    const joinDistinct = (previous,next,separator) => [
+      ...new Set([...previous.split(separator),...next.split(separator)].map(normalizeGloss).filter(Boolean))
+    ].join(separator);
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
       const columns = Array.isArray(rows[rowIndex]) ? rows[rowIndex] : [];
       const get = columnIndex => columnIndex >= 0 && columns[columnIndex] !== undefined
@@ -212,22 +216,30 @@
         throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: JLPT không hợp lệ (${level}).`);
       }
       const pos = get(index.pos);
+      const note = get(index.note);
       if (previous) {
-        // The same gloss can be listed in multiple JLPT levels. Keep the first entry.
-        if (normalizeGloss(previous.meaning) !== normalizeGloss(meaning) || normalizeGloss(previous.pos) !== normalizeGloss(pos)) {
+        const identical = normalizeGloss(previous.meaning) === normalizeGloss(meaning) && normalizeGloss(previous.pos) === normalizeGloss(pos);
+        if (!identical && !options.mergeGlossVariants) {
           throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: từ bị trùng (${term}).`);
         }
         if (explicitId) seenIds.add(explicitId);
-        duplicates.push(normalizedTerm);
+        if (identical) duplicates.push(normalizedTerm);
+        else {
+          previous.meaning = joinDistinct(previous.meaning,meaning,'; ');
+          previous.pos = joinDistinct(previous.pos,pos,'; ');
+          previous.note = joinDistinct(previous.note,note,' · ');
+          mergedTerms.push(normalizedTerm);
+        }
         continue;
       }
       if (seenIds.has(id)) throw new Error(`Tab Từ điển, dòng ${rowIndex + 1}: ID bị trùng (${id}).`);
       seenIds.add(id);
-      const entry = {id, term:normalizedTerm, reading, meaning, pos, level, note:get(index.note)};
+      const entry = {id, term:normalizedTerm, reading, meaning, pos, level, note};
       seenTerms.set(termKey,entry);
       entries.push(entry);
     }
     if (duplicates.length) options.onDuplicateTerms?.(duplicates);
+    if (mergedTerms.length) options.onMergedTerms?.(mergedTerms);
     return entries;
   }
 
@@ -330,20 +342,24 @@
         try {
           const rows = parseCSV(await requestCsv(sheetId,name,true));
           if (rows.length < 2) throw new Error('Tab không có dữ liệu.');
-          let warning = null;
+          const warnings = [];
           const entries = mapper(rows,{
             allowHomographs:true,
             dedupeIdenticalTerms:true,
+            mergeGlossVariants:true,
             onDuplicateTerms: terms => {
-              warning = `Tab ${name}: đã gộp ${terms.length} dòng có cùng từ, cách đọc và nghĩa (${[...new Set(terms)].slice(0,4).join(', ')}).`;
+              warnings.push(`Tab ${name}: đã gộp ${terms.length} dòng có cùng từ, cách đọc và nghĩa (${[...new Set(terms)].slice(0,4).join(', ')}).`);
+            },
+            onMergedTerms: terms => {
+              warnings.push(`Tab ${name}: đã gộp nghĩa bổ sung cho ${new Set(terms).size} từ có cùng cách đọc (${[...new Set(terms)].slice(0,4).join(', ')}).`);
             },
             skipConflicts:true,
             onConflicts: variants => {
-              warning = `Tab ${name}: bỏ qua ${variants.length} biến thể có nhiều từ gốc (${variants.slice(0,4).join(', ')}).`;
+              warnings.push(`Tab ${name}: bỏ qua ${variants.length} biến thể có nhiều từ gốc (${variants.slice(0,4).join(', ')}).`);
             }
           });
           if (!entries.length) throw new Error('Tab không còn dữ liệu hợp lệ.');
-          return {available:true,entries,sheetName:name,warning};
+          return {available:true,entries,sheetName:name,warning:warnings.join(' ') || null};
         } catch(error) {errors.push(`${name}: ${error.message}`);}
       }
       return {available:false,entries:[],warning:`Không tải được ${kind} (${errors.join('; ')}). Giữ cache bổ sung cũ.`};
