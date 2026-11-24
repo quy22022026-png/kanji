@@ -71,6 +71,13 @@
       return progress?.getMatchingStats?.() || progress?.getState?.() || {};
     }
 
+    const japaneseLabel = word => word.kanji || word.kana || '';
+    const vietnameseLabel = word => {
+      const meaning = String(word.meaning || '');
+      return meaning.split('(')[0].trim() || meaning;
+    };
+    const labelKey = label => label.normalize('NFKC').trim().replace(/\s+/gu,' ').toLocaleLowerCase('vi');
+
     function initRound() {
       clearErrorTimer();
       state.matchMatchedIds = new Set();
@@ -96,7 +103,17 @@
         const fresh = !due && !!isWordNew(word.id);
         (due || fresh ? priority : rest).push(word);
       });
-      const chosen = [...shuffle(priority), ...shuffle(rest)].slice(0, Math.min(5, pool.length));
+      const chosen = [];
+      const japanese = new Set(), vietnamese = new Set();
+      for (const word of [...shuffle(priority),...shuffle(rest)]) {
+        const left = labelKey(japaneseLabel(word));
+        const right = labelKey(vietnameseLabel(word));
+        if (!left || !right || japanese.has(left) || vietnamese.has(right)) continue;
+        chosen.push(word);
+        japanese.add(left);
+        vietnamese.add(right);
+        if (chosen.length === 5) break;
+      }
       state.matchRoundPairs = chosen;
       state.matchLeftItems = shuffle(chosen);
       state.matchRightItems = shuffle(chosen);
@@ -152,12 +169,11 @@
         button.className = className;
 
         if (isJapanese) {
-          const display = word.kanji || word.kana || '';
+          const display = japaneseLabel(word);
           const showFurigana = !!(prefs.showFuri && word.kanji && word.kana && word.kanji !== word.kana);
           button.innerHTML = `<span class="font-jp text-lg sm:text-xl font-extrabold leading-tight">${escapeHtml(display)}</span>${showFurigana ? `<span class="font-jp text-[11px] font-bold text-[#FB6F92] mt-0.5">${escapeHtml(word.kana)}</span>` : ''}`;
         } else {
-          const meaning = String(word.meaning || '');
-          const shortMeaning = meaning.split('(')[0].trim() || meaning;
+          const shortMeaning = vietnameseLabel(word);
           button.innerHTML = `<span class="text-xs sm:text-sm font-extrabold leading-snug line-clamp-2">${escapeHtml(shortMeaning)}</span>`;
         }
         button.onclick = () => handleClick(word, side, isJapanese);
