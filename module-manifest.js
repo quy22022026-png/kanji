@@ -40,7 +40,7 @@
     });
     add('meaning',['vocabulary','pronunciation','ui'],({dependencies:d,events,cleanup}) => {
       const $ = d.ui.$;
-      const api = window.KawaiiMeaningModule.create({vocabulary:d.vocabulary,events,builtinDictionary:window.KawaiiAppConfig.BUILTIN_MINI_DICT,onSpeak:d.pronunciation.speakTerm,getElements:() => ({charBox:$('trCharBox'),reading:$('trReading'),hanViet:$('trHanViet'),level:$('trLevel'),meaning:$('trMeaning'),contextLabel:$('trContextLabel'),baseSection:$('trBaseSection'),baseWord:$('trBaseWord'),baseMeaning:$('trBaseMeaning'),note:$('trNote'),sheet:$('translateSheet')})});
+      const api = window.KawaiiMeaningModule.create({vocabulary:d.vocabulary,events,builtinDictionary:window.KawaiiAppConfig.BUILTIN_MINI_DICT,onSpeak:(text,guide) => d.pronunciation.speakTerm(text,null,guide),getElements:() => ({charBox:$('trCharBox'),reading:$('trReading'),hanViet:$('trHanViet'),level:$('trLevel'),meaning:$('trMeaning'),contextLabel:$('trContextLabel'),baseSection:$('trBaseSection'),baseWord:$('trBaseWord'),baseMeaning:$('trBaseMeaning'),note:$('trNote'),sheet:$('translateSheet')})});
       const scope = d.ui.createScope();cleanup(scope.destroy);
       scope.bind($('trCloseBtn'),'onclick',api.hidePopup);scope.bind($('trSpeakBtn'),'onclick',api.speakActive);
       events.on('meaning:hide',api.hidePopup);return api;
