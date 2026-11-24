@@ -79,76 +79,145 @@
       if (meaning) meaning.renderSentence(containerEl, sentence, parentWord, {analyze: state.fcFlipped});
     }
 
+    function getLessonInProgress() {
+      const session = studySession?.getSnapshot();
+      if (session?.status !== 'active') return null;
+      const active = lessons?.getActiveSnapshot();
+      return active?.sessionId === session.id ? {key:active.key,session} : null;
+    }
+
     function renderLessonBrowser() {
       const home = $('lessonHome');
       home.classList.toggle('hidden', state.mode !== 'flashcard');
       if (state.mode !== 'flashcard') return;
-      $('lessonBrowser').classList.toggle('hidden', !state.lessonBrowserOpen || state.lessonStudying);
-      $('lessonActions').classList.toggle('hidden', !state.lesson);
+      const browserOpen = state.lessonBrowserOpen && !state.lessonStudying;
+      const topic = state.prefs.topic;
+      const matchesTopic = lesson => topic === 'ALL' || lesson.topic === topic;
+      const selected = state.lesson && (state.lessonStudying ||
+        (state.lesson.level === state.lessonLevel && matchesTopic(state.lesson))) ? state.lesson : null;
+      const inProgress = getLessonInProgress();
+      $('lessonBrowser').classList.toggle('hidden', !browserOpen);
+      $('btnBeginLessons').textContent = state.lessonStudying ? 'Chọn bài khác' : 'Bắt đầu học';
+      $('btnBeginLessons').setAttribute('aria-expanded', String(browserOpen));
+      $('lessonActions').classList.toggle('hidden', !selected);
       $('flashcardView').classList.toggle('hidden', !state.lessonStudying);
+
+      if (selected) {
+        const done = lessons.getCompletedCount(selected);
+        $('lessonSelectedInfo').textContent = `${selected.level} · ${selected.topic} · ${done}/${selected.words.length} từ đã học`;
+        const remaining = browserOpen && inProgress?.key === selected.key
+          ? inProgress.session.queue.length : selected.words.length - done;
+        const continueButton = $('btnLessonContinue');
+        continueButton.textContent = `Học tiếp (${remaining} từ)`;
+        continueButton.disabled = remaining === 0;
+        continueButton.classList.toggle('hidden', remaining === 0);
+      }
+
+      if (!browserOpen) return;
       const levels = $('lessonLevels');
       levels.replaceChildren();
       LEVELS.filter(level => state.words.some(w => w.level === level)).forEach(level => {
         const b = document.createElement('button');
         b.type = 'button'; b.textContent = level;
         b.className = 'rounded-xl px-4 py-2 text-xs font-extrabold ' + (state.lessonLevel === level ? 'bg-[#FB6F92] text-white' : 'bg-[#F6EFE8]');
-        b.onclick = () => { state.lessonLevel = level; state.lesson = null; state.lessonStudying = false; renderLessonBrowser(); };
+        b.onclick = () => events.emit('study:level-selected',level);
         levels.appendChild(b);
       });
       const list = $('lessonList'); list.replaceChildren();
-      (lessons?.getLessons(state.words, state.lessonLevel) || []).forEach((lesson, i) => {
+      const available = lessons.getLessons(state.words,state.lessonLevel)
+        .map((lesson,index) => ({lesson,number:index + 1}))
+        .filter(({lesson}) => matchesTopic(lesson));
+      if (!available.length) {
+        const message = document.createElement('p');
+        message.className = 'text-sm text-[#786D69]';
+        message.textContent = `Chưa có bài học ${state.lessonLevel} cho lựa chọn hiện tại.`;
+        list.appendChild(message);
+      }
+      available.forEach(({lesson,number}) => {
         const completed = lessons.getCompletedCount(lesson);
         const isComplete = completed === lesson.words.length;
+        const canResume = inProgress?.key === lesson.key;
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'text-left rounded-2xl border border-[#F1ECE6] p-3 bg-[#FFFDF9] hover:border-[#FB6F92]';
-        const title = document.createElement('strong'); title.className = 'block text-sm'; title.textContent = `Bài ${i + 1} · ${lesson.topic}`;
+        const title = document.createElement('strong'); title.className = 'block text-sm'; title.textContent = `Bài ${number} · ${lesson.topic}`;
         const desc = document.createElement('span'); desc.className = 'text-xs text-[#786D69]'; desc.textContent = `${completed}/${lesson.words.length} từ đã học`;
         b.append(title, desc);
-        if (isComplete) {
-          const replay = document.createElement('span');
-          replay.className = 'block text-xs font-extrabold text-[#FB6F92] mt-0.5';
-          replay.textContent = 'Học lại';
-          b.append(replay);
+        if (canResume || isComplete) {
+          const action = document.createElement('span');
+          action.className = 'block text-xs font-extrabold text-[#FB6F92] mt-0.5';
+          action.textContent = canResume ? 'Học tiếp' : 'Học lại';
+          b.append(action);
         }
-        b.onclick = () => {
-          if (ratingPending) return;
-          state.lesson = lesson;
-          startLesson(isComplete);
-        };
+        b.onclick = () => startLesson(lesson);
         list.appendChild(b);
       });
-      if (state.lesson) {
-        const done = lessons?.getCompletedCount(state.lesson) || 0;
-        $('lessonSelectedInfo').textContent = `${state.lesson.level} · ${state.lesson.topic} · ${done}/${state.lesson.words.length} từ đã học`;
-        const remaining = state.lesson.words.length - done;
-        const continueButton = $('btnLessonContinue');
-        continueButton.textContent = `Học tiếp (${remaining} từ)`;
-        continueButton.disabled = remaining === 0;
-        continueButton.classList.toggle('hidden', remaining === 0);
-      }
     }
 
-    function startLesson(restart) {
-      if (ratingPending) return;
-      const lesson = state.lesson;
-      if (!lesson || !lessons || !flashcards) return;
-      let words = lessons.getStudyWords(lesson, restart);
-      if (!words.length && !restart) words = lessons.getStudyWords(lesson, true);
-      if (!words.length) return;
-      studySession?.clear();
-      preferences.update({ level: lesson.level, topic: lesson.topic, fcFilter: 'SMART' }, { persist: true });
-      rebuildTopicOptions();
-      state.fcDeck = flashcards.start(words, { limit: words.length });
-      state.lessonStudying = true;
-      state.fcIndex = 0; state.fcFlipped = false;
-      state.sessionStats = { reviewed: 0, good: 0, again: 0 };
-      try {
-        lessons.activate(lesson, studySession?.getSnapshot(), state.fcDeck[0]?.id || null);
-      } catch (error) {
-        console.warn('[Kawaii Lessons] Không thể lưu ngữ cảnh bài học:', error);
-        showToast('Bài học đã bắt đầu nhưng chưa lưu được trạng thái khôi phục.', 'warning');
+    function openLessonBrowser(level = state.prefs.level) {
+      cancelCardMove();
+      stopAudio();
+      hideTranslateSheet();
+      state.lessonLevel = level;
+      state.lessonBrowserOpen = true;
+      state.lessonStudying = false;
+      renderAll();
+    }
+
+    function loadLessonDeck(lesson,session,currentWordId = null) {
+      state.lesson = lesson;
+      state.fcDeck = flashcards.restore();
+      const wordId = session?.currentWordId || currentWordId;
+      state.fcIndex = Math.max(0,state.fcDeck.findIndex(word => word.id === wordId));
+      state.fcFlipped = false;
+      state.sessionStats = {
+        reviewed:session?.stats.reviewed || 0,
+        good:session?.stats.firstAttemptCorrect || 0,
+        again:session?.stats.again || 0
+      };
+    }
+
+    function startLesson(lesson,restart = false) {
+      if (ratingPending || !lesson) return;
+      const inProgress = getLessonInProgress();
+      let session = !restart && inProgress?.key === lesson.key ? inProgress.session : null;
+      if (session) {
+        lesson = lessons.restore(state.words,session)?.lesson || lesson;
+      } else {
+        let words = lessons.getStudyWords(lesson,restart);
+        if (!words.length && !restart) words = lessons.getStudyWords(lesson,true);
+        if (!words.length) return;
+        const previous = studySession.getSnapshot();
+        try {
+          flashcards.start(words,{limit:words.length});
+          session = studySession.getSnapshot();
+          lessons.activate(lesson,session,session.currentWordId);
+        } catch (error) {
+          if (session && session.id !== previous?.id) {
+            try {
+              studySession.clear();
+              if (previous) studySession.restoreSnapshot(previous);
+            } catch (rollbackError) {
+              console.warn('[Kawaii Lessons] Không thể khôi phục phiên trước:',rollbackError);
+              restore();
+              renderAll();
+            }
+          }
+          console.warn('[Kawaii Lessons] Không thể bắt đầu bài học:',error);
+          showToast('Không thể lưu phiên học trên thiết bị.', 'error');
+          return;
+        }
       }
+      cancelCardMove();
+      stopAudio();
+      hideTranslateSheet();
+      state.lessonLevel = lesson.level;
+      state.lessonBrowserOpen = false;
+      state.lessonStudying = true;
+      const topic = state.prefs.level === lesson.level ? state.prefs.topic : 'ALL';
+      preferences.update({level:lesson.level,topic,fcFilter:'SMART'},{persist:true});
+      rebuildTopicOptions();
+      loadLessonDeck(lesson,session);
       renderAll();
     }
 
@@ -389,8 +458,7 @@
       state.sessionStats = snapshot
         ? { reviewed: 0, good: 0, again: 0 }
         : { reviewed: 0, good: 0, again: 0 };
-      renderHeader();
-      renderFlashcard();
+      renderAll();
       if (!state.fcDeck.length) {
         showToast('Hiện không có từ mới hoặc từ đến hạn để bắt đầu phiên.', 'info');
       }
@@ -471,33 +539,22 @@
     }
 
     function restore() {
+      const browsing = state.lessonBrowserOpen && !state.lessonStudying;
       flashcards.reconcileDataset();
-      state.lessonLevel = state.prefs.level;
-      const restoredLesson = lessons?.restore(state.words, studySession?.getSnapshot());
+      const session = studySession?.getSnapshot();
+      const restoredLesson = lessons?.restore(state.words, session);
+      if (!browsing || !state.words.some(word => word.level === state.lessonLevel)) state.lessonLevel = state.prefs.level;
       if (restoredLesson) {
-        state.lesson = restoredLesson.lesson;
-        state.lessonLevel = restoredLesson.lesson.level;
-        state.lessonBrowserOpen = true;
-        state.lessonStudying = true;
-        preferences.update({ level: restoredLesson.lesson.level, topic: restoredLesson.lesson.topic }, { persist: true });
-        state.fcDeck = flashcards?.restore() || [];
-        const restoredCurrent = studySession.getSnapshot()?.currentWordId || restoredLesson.currentWordId;
-        const restoredIndex = restoredCurrent
-          ? state.fcDeck.findIndex(word => word.id === restoredCurrent)
-          : -1;
-        state.fcIndex = restoredIndex >= 0 ? restoredIndex : 0;
-        state.fcFlipped = false;
-        const sessionSnapshot = studySession?.getSnapshot();
-        state.sessionStats = sessionSnapshot
-          ? {
-              reviewed: sessionSnapshot.stats.reviewed,
-              good: sessionSnapshot.stats.firstAttemptCorrect || 0,
-              again: sessionSnapshot.stats.again
-            }
-          : { reviewed: 0, good: 0, again: 0 };
+        if (!browsing) {
+          state.lessonLevel = restoredLesson.lesson.level;
+          state.lessonStudying = true;
+          const topic = state.prefs.level === restoredLesson.lesson.level ? state.prefs.topic : 'ALL';
+          preferences.update({level:restoredLesson.lesson.level,topic,fcFilter:'SMART'},{persist:true});
+        }
+        loadLessonDeck(restoredLesson.lesson,session,restoredLesson.currentWordId);
       } else {
         state.lesson = null;
-        state.lessonStudying = studySession?.getSnapshot()?.context === 'standalone';
+        state.lessonStudying = !browsing && session?.context === 'standalone';
         rebuildFlashcardDeck();
       }
     }
@@ -505,16 +562,10 @@
     function browseWord(word) { state.lesson = null; state.lessonStudying = true; preferences.update({level: word.level, topic: 'ALL', fcFilter:'ALL'}, {persist:true}); rebuildFlashcardDeck(); const index = state.fcDeck.findIndex(w => w.id === word.id); state.fcIndex = Math.max(0,index); state.fcFlipped = false; }
     function reset() { state.lesson = null; state.lessonStudying = false; state.lessonBrowserOpen = false; rebuildFlashcardDeck(); }
     function mount() {
-    scope.bind($('btnBeginLessons'), 'onclick', () => { state.lessonBrowserOpen = true; renderLessonBrowser(); });
-    scope.bind($('btnLessonBack'), 'onclick', () => {
-      state.lesson = null;
-      state.lessonStudying = false;
-      lessons?.clearActive();
-      studySession?.clear();
-      renderAll();
-    });
-    scope.bind($('btnLessonContinue'), 'onclick', () => startLesson(false));
-    scope.bind($('btnLessonRestart'), 'onclick', () => startLesson(true));
+    scope.bind($('btnBeginLessons'), 'onclick', () => openLessonBrowser());
+    scope.bind($('btnLessonBack'), 'onclick', () => openLessonBrowser());
+    scope.bind($('btnLessonContinue'), 'onclick', () => startLesson(state.lesson));
+    scope.bind($('btnLessonRestart'), 'onclick', () => startLesson(state.lesson,true));
 
     scope.add(window.KawaiiFlashcardInteraction.attach($('fcPerspective'), {
       onFlip: flipFlashcard,
@@ -543,7 +594,17 @@
     });
     scope.bind($('btnStartNextSession'), 'onclick', startNewStudySession);
     scope.bind($('btnStartQuizAfterSession'), 'onclick', () => events.emit('quiz:start', {count:10}));
-    scope.bind($('btnViewAllCards'), 'onclick', () => { preferences.set('fcFilter', 'ALL', { persist: true }); rebuildFlashcardDeck(); renderFlashcard(); });
+    scope.bind($('btnViewAllCards'), 'onclick', () => {
+      if (ratingPending) return;
+      if (state.lesson) {
+        lessons.clearActive();
+        studySession.clear();
+        state.lesson = null;
+      }
+      preferences.set('fcFilter', 'ALL', { persist: true });
+      rebuildFlashcardDeck();
+      renderAll();
+    });
     const sessionSizeSelect = $('sessionSizeSelect');
     const allowedSessionSizes = new Set(['10', '20', '30', '0']);
     if (!allowedSessionSizes.has(String(state.prefs.sessionSize))) preferences.set('sessionSize', 10);
@@ -573,7 +634,7 @@
 
     }
     mount();
-    return Object.freeze({restore, reset, browseWord, renderFlashcard, renderLessonBrowser, rebuildFlashcardDeck, cancelCardMove, startNewStudySession, handleFlashcardRating, flipFlashcard, moveCard, getSnapshot: () => ({...state, fcDeck:[...state.fcDeck], sessionStats:{...state.sessionStats}}), setViewField(key,value) { if (!['words','prefs','mode'].includes(key) && Object.hasOwn(state,key)) state[key] = value; }, destroy() {scope.destroy(); cancelCardMove(); for (const id of ['lessonList','lessonLevels','fcRelatedList','fcKanji','fcExJa']) $(id)?.replaceChildren();}});
+    return Object.freeze({restore, reset, browseWord, renderFlashcard, renderLessonBrowser, openLessonBrowser, rebuildFlashcardDeck, cancelCardMove, startNewStudySession, handleFlashcardRating, flipFlashcard, moveCard, getSnapshot: () => ({...state, fcDeck:[...state.fcDeck], sessionStats:{...state.sessionStats}}), setViewField(key,value) { if (!['words','prefs','mode'].includes(key) && Object.hasOwn(state,key)) state[key] = value; }, destroy() {scope.destroy(); cancelCardMove(); for (const id of ['lessonList','lessonLevels','fcRelatedList','fcKanji','fcExJa']) $(id)?.replaceChildren();}});
   }
   window.KawaiiFlashcardViewModule = Object.freeze({create});
 })();
