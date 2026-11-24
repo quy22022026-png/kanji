@@ -85,14 +85,14 @@
       }
     }
 
-    function makeCacheKey(input, prefs, isolatedWord) {
+    function makeCacheKey(input, prefs, isolatedWord, guide) {
       return JSON.stringify([
         prefs.zenSpeed ?? 1, prefs.zenPitch ?? 0, prefs.zenHappy ?? 60,
-        input.engineText, input.reading?.reading ?? null, isolatedWord
+        input.engineText, input.reading?.reading ?? null, isolatedWord, guide
       ]);
     }
 
-    async function play(text, customPrefs = null, kanaSample = '', wordMode = false) {
+    async function play(text, customPrefs, {kanaSample = '', wordMode = false, wordGuide} = {}) {
       const phrase = String(text || '').trim();
       if (!phrase) return { ok: false, reason: 'empty' };
 
@@ -100,8 +100,12 @@
       const request = requestId;
       const input = pronunciationRequest(phrase,kanaSample);
       const settings = { ...getPrefs(), ...(customPrefs || {}) };
-      const prefs = input.reading ? {...settings, zenHappy:0} : settings;
       const isolatedWord = !kanaSample && (wordMode || !!input.reading);
+      const surface = String(wordGuide?.surface || '').trim();
+      const example = String(wordGuide?.example || '').trim();
+      const hasWordSpelling = !input.reading || /\p{Script=Han}/u.test(surface);
+      const guide = isolatedWord && hasWordSpelling && (surface || example) ? {surface,example} : null;
+      const prefs = input.reading && !guide ? {...settings, zenHappy:0} : settings;
       const engine = getEngine();
 
       if (!engine) {
@@ -112,7 +116,7 @@
         return { ok: false, reason: 'engine-unavailable' };
       }
 
-      const cacheKey = makeCacheKey(input, prefs, isolatedWord);
+      const cacheKey = makeCacheKey(input, prefs, isolatedWord, guide);
       try {
         if (!wavCache.has(cacheKey)) {
           const task = synthesisQueue.then(async () => {
@@ -120,6 +124,7 @@
             const result = await engine.speak(input.engineText, {
               ...(input.reading ? {dict:[input.reading]} : {}),
               ...(isolatedWord ? {isolatedWord:true} : {}),
+              ...(guide ? {wordGuide:guide} : {}),
               emotion: {
                 happy: Number(prefs.zenHappy ?? 60),
                 neutral: 100 - Number(prefs.zenHappy ?? 60)
@@ -163,18 +168,20 @@
     }
 
     function speakWord(word, customPrefs = null) {
-      return speakTerm(word?.kana || word?.kanji, customPrefs);
+      return speakTerm(word?.kana || word?.kanji, customPrefs, {
+        surface:word?.kanji, example:word?.example?.ja
+      });
     }
 
-    function speakTerm(text, customPrefs = null) {
-      return play(text,customPrefs,'',true);
+    function speakTerm(text, customPrefs = null, wordGuide) {
+      return play(text,customPrefs,{wordMode:true,wordGuide});
     }
 
     function speakKana(kana, phoneticInfo = null, mode = 'single', customPrefs = null) {
       const text = String(kana || '').trim();
       const mora = singleMora(text) || singleMora(String(phoneticInfo?.clearMora || '').trim());
       const sample = mode === 'with-word' && mora ? String(phoneticInfo?.sampleJa || '').trim() : '';
-      return play(mora || text,{...customPrefs,zenHappy:0},sample,true);
+      return play(mora || text,{...customPrefs,zenHappy:0},{kanaSample:sample,wordMode:true});
     }
 
     return Object.freeze({
