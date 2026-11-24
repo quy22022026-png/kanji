@@ -52,8 +52,12 @@
     scope.bind($('btnSyncGoogleSheet'), 'onclick', () => syncFromGoogleSheets({ silent: false }));
     scope.bind($('autoSyncSheetCheck'), 'onchange', (e) => { preferences.set('autoSyncSheet', e.target.checked, { persist: true }); });
     scope.bind($('btnLoadSampleData'), 'onclick', async () => {
-      await applyDataset(SAMPLE_DATASET, true);
-      showToast('Đã nạp bộ từ vựng mẫu chuẩn Sheet!', 'success');
+      try {
+        await applyDataset(SAMPLE_DATASET,true);
+        showToast('Đã nạp bộ từ vựng mẫu chuẩn Sheet!', 'success');
+      } catch (error) {
+        showToast('Không nạp được bộ mẫu: ' + error.message,'error');
+      }
     });
 
     scope.bind($('csvFileInput'), 'onchange', async (e) => {
