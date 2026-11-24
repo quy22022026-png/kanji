@@ -26,13 +26,13 @@ function wordLevels(audio,sampleRate) {
   return {peak,rms:active.reduce((sum,level) => sum + level,0) / active.length};
 }
 
-function normalizeWord(result) {
+function normalizeWord(result,target = 0.14,maxGain = 2.5) {
   const {audio,sampleRate} = result;
   if (!audio?.length) return result;
   const {peak,rms} = wordLevels(audio,sampleRate);
   // Boost quiet words while leaving headroom and avoiding amplification of near-silence.
   if (rms < 0.008) return result;
-  const gain = Math.max(1,Math.min(2.5,0.14 / rms,0.9 / peak));
+  const gain = Math.max(1,Math.min(maxGain,target / rms,0.9 / peak));
   return gain > 1 ? {...result,audio:audio.map(sample => sample * gain)} : result;
 }
 
@@ -48,30 +48,85 @@ function kanaReadingKey(text) {
   catch {return '';}
 }
 
-async function synthesizeKana(mora,sample,options) {
-  const phones = kanaToPhones(mora,engine.meta.kana);
-  const marks = phones.map(() => 0);
-  const utterance = sample ? `${mora}、${sample}。` : `${mora}。`;
-  let durScale;
-  if (sample) {
-    let analysis = await engine.analyze(utterance);
-    const comma = analysis.phones.indexOf(',');
-    const hasSample = comma >= 0 && analysis.phones.slice(comma + 1).some(phone => !PUNCTUATION_PHONE.has(phone));
-    let start = hasSample ? comma + 1 : 0;
-    const expected = KANA_READING.test(sample) ? kanaReadingKey(sample) : '';
-    if (!hasSample || (expected && readingKey(analysis.phones.slice(start)) !== expected)) {
-      const standalone = await engine.analyze(`${sample}。`);
-      if (!hasSample || readingKey(standalone.phones) === expected) {
-        analysis = standalone;
-        start = 0;
-      }
+function moraVoicing({audio,dur,timing,sampleRate},phoneCount) {
+  const hop = audio?.length / timing?.frames;
+  if (!Number.isInteger(hop) || hop < 1 || !dur?.[phoneCount]) return null;
+  // Durations include the leading silence. The last phone is the vowel or syllabic nasal.
+  const start = dur.slice(0,phoneCount).reduce((total,frames) => total + frames,0) * hop;
+  const length = dur[phoneCount] * hop;
+  const signal = audio.subarray(start,start + length);
+  const minLag = Math.round(sampleRate / 540);
+  const maxLag = Math.min(Math.round(sampleRate / 100),Math.floor(signal.length / 3));
+  if (maxLag < minLag) return null;
+  let periodicity = 0;
+  for (let lag = minLag; lag <= maxLag; lag += 3) {
+    let cross = 0, leftEnergy = 0, rightEnergy = 0;
+    for (let index = 0; index + lag < signal.length; index += 4) {
+      const left = signal[index], right = signal[index + lag];
+      cross += left * right;
+      leftEnergy += left * left;
+      rightEnergy += right * right;
     }
-    const end = PUNCTUATION_PHONE.has(analysis.phones.at(-1)) ? -1 : analysis.phones.length;
-    // Shorten the only pause while the model generates both parts as one utterance.
-    durScale = [...phones.map(() => 1),0.55];
-    phones.push(',',...analysis.phones.slice(start,end));
-    marks.push(0,...analysis.marks.slice(start,end));
+    periodicity = Math.max(periodicity,cross / Math.max(1e-8,Math.sqrt(leftEnergy * rightEnergy)));
   }
+  const rms = Math.sqrt(signal.reduce((sum,value) => sum + value * value,0) / signal.length);
+  return {periodicity,rms};
+}
+
+async function speakClearMora(mora,phones,options) {
+  const voiceOptions = engineOptionsOf(options);
+  const marks = [...phones, '.'].map(() => 0);
+  const utterance = `${mora}。`;
+  const natural = await engine.speakWith(utterance,{...voiceOptions,labels:{phones:[...phones,'.'],marks}});
+  const before = moraVoicing(natural,phones.length);
+  if (!before || (before.periodicity >= 0.75 && before.rms >= 0.055)) return normalizeWord(natural,0.16,3.25);
+
+  const neutralVowel = phones.length === 1 && /^[aiueo]$/u.test(phones[0]) &&
+    voiceOptions.blend?.neutral < 0.99;
+  // A neutral vowel or a different unspoken ending can strengthen the one voiced sound.
+  const alternateOptions = neutralVowel ? engineOptionsOf({...options,emotion:{neutral:100}}) : voiceOptions;
+  const ending = neutralVowel ? '.' : '-';
+  let result = natural;
+  try {
+    const alternate = await engine.speakWith(utterance,{...alternateOptions,labels:{phones:[...phones,ending],marks}});
+    const after = moraVoicing(alternate,phones.length);
+    if (after && after.periodicity >= Math.max(0.55,before.periodicity - 0.1) &&
+        after.rms * after.periodicity > 1.2 * before.rms * before.periodicity) result = alternate;
+  } catch {
+    // The first complete synthesis remains available.
+  }
+  return normalizeWord(result,0.16,3.25);
+}
+
+async function synthesizeKana(mora,sample,options) {
+  if (mora.length > 1) {
+    // Use the compound-kana reading and cadence preceding the pause-shortening change.
+    const surface = sample ? '練習用単音' : mora;
+    const result = await engine.speak(sample ? `${surface}。${sample}。` : surface,{
+      ...options,emotion:{neutral:100,happy:0},dict:[{surface,reading:mora,accent:0}]
+    });
+    return sample ? result : normalizeWord(result);
+  }
+  const phones = kanaToPhones(mora,engine.meta.kana);
+  if (!sample) return speakClearMora(mora,phones,options);
+  const marks = phones.map(() => 0);
+  const utterance = `${mora}、${sample}。`;
+  let analysis = await engine.analyze(utterance);
+  const comma = analysis.phones.indexOf(',');
+  const hasSample = comma >= 0 && analysis.phones.slice(comma + 1).some(phone => !PUNCTUATION_PHONE.has(phone));
+  let start = hasSample ? comma + 1 : 0;
+  const expected = KANA_READING.test(sample) ? kanaReadingKey(sample) : '';
+  if (!hasSample || (expected && readingKey(analysis.phones.slice(start)) !== expected)) {
+    const standalone = await engine.analyze(`${sample}。`);
+    if (!hasSample || readingKey(standalone.phones) === expected) {
+      analysis = standalone;
+      start = 0;
+    }
+  }
+  const end = PUNCTUATION_PHONE.has(analysis.phones.at(-1)) ? -1 : analysis.phones.length;
+  const durScale = [...phones.map(() => 1),0.55];
+  phones.push(',',...analysis.phones.slice(start,end));
+  marks.push(0,...analysis.marks.slice(start,end));
   phones.push('.');
   marks.push(0);
   const result = await engine.speakWith(utterance,{...engineOptionsOf(options),labels:{phones,marks},durScale});
