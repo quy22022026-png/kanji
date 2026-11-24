@@ -27,6 +27,18 @@
       preferences.set('topic', sel.value);
     }
 
+    function selectStudyLevel(level) {
+      preferences.update({level,topic:'ALL'},{persist:true});
+      hideTranslateSheet();
+      rebuildTopicOptions();
+      matching.initRound();
+      if (state.mode === 'flashcard') flashcardView.openLessonBrowser(level);
+      else {
+        rebuildFlashcardDeck();
+        renderAll();
+      }
+    }
+
     function renderHeader() {
       $('headerDatasetLabel').textContent = state.words.length
         ? `${state.datasetTitle} (${state.words.length} từ)`
@@ -56,14 +68,7 @@
           ? 'px-3 py-1 rounded-xl text-xs font-extrabold bg-[#FF8FA3] text-white shadow-sm flex items-center gap-1.5 shrink-0 transition'
           : 'px-3 py-1 rounded-xl text-xs font-bold bg-white border border-[#E8DFD6] text-[#5E524E] hover:border-[#FF8FA3] flex items-center gap-1.5 shrink-0 transition';
         btn.innerHTML = `<span>${lvl}</span><span class="text-[10px] opacity-85">${lvlWords.length ? pct + '%' : '—'}</span>`;
-        btn.onclick = () => {
-          preferences.update({ level: lvl, topic: 'ALL' }, { persist: true });
-          hideTranslateSheet();
-          rebuildTopicOptions();
-          rebuildFlashcardDeck();
-          matching.initRound();
-          renderAll();
-        };
+        btn.onclick = () => selectStudyLevel(lvl);
         pillsEl.appendChild(btn);
       });
 
@@ -151,7 +156,15 @@
     registerModule({id:'quiz',label:'Trắc nghiệm',icon:'📝',render: quizView.renderQuizModule});
     registerModule({id:'weak-words',label:'Sổ từ yếu',icon:'📕',render: quizView.renderWeakWordsModule});
     document.querySelectorAll('.mode-tab').forEach(btn => scope.bind(btn, 'onclick', () => {flashcardView.cancelCardMove(); events.emit('audio:stop'); hideTranslateSheet(); routing.activate(btn.dataset.mode);}));
-    scope.bind($('topicSelect'),'onchange', e => {preferences.set('topic',e.target.value,{persist:true}); rebuildFlashcardDeck(); matching.initRound(); renderAll();});
+    scope.bind($('topicSelect'),'onchange', e => {
+      preferences.set('topic',e.target.value,{persist:true});
+      matching.initRound();
+      if (state.mode === 'flashcard' && flashcardView.getSnapshot().lesson) flashcardView.openLessonBrowser();
+      else {
+        rebuildFlashcardDeck();
+        renderAll();
+      }
+    });
     scope.bind($('furiToggleBtn'),'onclick', () => {preferences.set('showFuri',!state.prefs.showFuri,{persist:true}); renderAll();});
     for (const id of ['matchNewRoundBtn','matchNextRoundCta']) scope.bind($(id),'onclick',matching.newRound);
     scope.bind($('matchSwapBtn'),'onclick',matching.toggleDirection);
@@ -159,7 +172,8 @@
     events.on('mode:changed',renderAll);
     events.on('ui:header',renderHeader);
     events.on('ui:topics',rebuildTopicOptions);
-    events.on('dataset:loaded', () => {rebuildTopicOptions(); flashcardView.restore(); matching.initRound(); renderAll();});
+    events.on('study:level-selected',selectStudyLevel);
+    events.on('dataset:loaded', () => {flashcardView.restore(); rebuildTopicOptions(); matching.initRound(); renderAll();});
     events.on('cloud:backup-restored', () => {rebuildFlashcardDeck(); renderAll();});
     events.on('quiz:start', ({count}) => quizView.startQuiz(count));
 
