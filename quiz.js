@@ -66,6 +66,8 @@
       return String(word.meaning || '').trim();
     }
 
+    const labelKey = label => label.normalize('NFKC').trim().replace(/\s+/gu,' ').toLocaleLowerCase('vi');
+
     function priority(word) {
       const wrong = (Number(data.wrongCounts[word.id]) || 0) +
         (Number(getExternalErrorCount(word.id)) || 0);
@@ -92,26 +94,34 @@
     }
 
     function buildQuestion(word, pool, index) {
-      const direction = Math.random() < 0.5 ? 'word-to-meaning' : 'meaning-to-word';
-      const correct = direction === 'word-to-meaning' ? meaningLabel(word) : wordLabel(word);
-      const distractors = shuffle(pool.filter(item => item.id !== word.id)
-        .map(item => direction === 'word-to-meaning' ? meaningLabel(item) : wordLabel(item))
-        .filter(Boolean)
-        .filter((value, i, arr) => arr.indexOf(value) === i && value !== correct))
-        .slice(0, 3);
-      if (!correct || distractors.length < 3) return null;
-      const options = shuffle([correct, ...distractors]);
-      return {
-        id: `q_${index}_${word.id}`,
-        wordId: word.id,
-        direction,
-        prompt: direction === 'word-to-meaning' ? wordLabel(word) : meaningLabel(word),
-        correctAnswer: correct,
-        options,
-        meaning: meaningLabel(word),
-        wordLabel: wordLabel(word),
-        example: word.example || null
-      };
+      const directions = ['word-to-meaning','meaning-to-word'];
+      if (Math.random() < 0.5) directions.reverse();
+      for (const direction of directions) {
+        const [promptLabel,answerLabel] = direction === 'word-to-meaning'
+          ? [wordLabel,meaningLabel] : [meaningLabel,wordLabel];
+        const prompt = promptLabel(word);
+        const correct = answerLabel(word);
+        const promptKey = labelKey(prompt);
+        // Other entries can legitimately answer the same prompt.
+        const used = new Set(pool.filter(item => labelKey(promptLabel(item)) === promptKey)
+          .map(item => labelKey(answerLabel(item))));
+        const distractors = [];
+        for (const item of shuffle(pool)) {
+          const label = answerLabel(item);
+          const key = labelKey(label);
+          if (!key || used.has(key)) continue;
+          distractors.push(label);
+          used.add(key);
+          if (distractors.length === 3) break;
+        }
+        if (distractors.length < 3) continue;
+        return {
+          id:`q_${index}_${word.id}`, wordId:word.id, direction, prompt,
+          correctAnswer:correct, options:shuffle([correct,...distractors]),
+          meaning:meaningLabel(word), wordLabel:wordLabel(word), example:word.example || null
+        };
+      }
+      return null;
     }
 
     function start(words, count = 10, flashcardScore = 0) {
@@ -121,7 +131,14 @@
       const questionCount = count === 15 ? 15 : 10;
       if (unique.length < 4) throw new Error('Cần ít nhất 4 từ đã học để tạo trắc nghiệm.');
       const selected = weightedSample(unique, Math.min(questionCount, unique.length));
-      const questions = selected.map((word, index) => buildQuestion(word, unique, index)).filter(Boolean);
+      const selectedIds = new Set(selected.map(word => word.id));
+      const candidates = [...selected,...shuffle(unique.filter(word => !selectedIds.has(word.id)))];
+      const questions = [];
+      for (const word of candidates) {
+        const question = buildQuestion(word,unique,questions.length);
+        if (question) questions.push(question);
+        if (questions.length === questionCount) break;
+      }
       if (questions.length < 4) throw new Error('Không đủ dữ liệu nghĩa để tạo câu hỏi.');
       active = {
         id: `quiz_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -159,6 +176,7 @@
       if (active.currentFeedback) throw new Error('Hãy chuyển tiếp sau khi xem phản hồi.');
       const question = currentQuestion();
       if (!question) throw new Error('Không tìm thấy câu hỏi hiện tại.');
+      if (!question.options.includes(answer)) throw new Error('Hãy chọn một đáp án trong câu hỏi.');
       const correct = answer === question.correctAnswer;
       const attemptNo = active.phase === 'first' ? 1 : 2;
       const attempt = {
