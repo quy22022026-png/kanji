@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f4f6f4" />
+    <meta
+      name="description"
+      content="Quản lý bảng, sửa dữ liệu và chạy SQL Supabase, thuận tiện trên điện thoại."
+    />
+    <title>SupaDesk · Không gian dữ liệu của bạn</title>
+    <link rel="icon" href="./public/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./public/style.css" />
+    <script type="module" src="./public/app.js"></script>
+  </head>
+  <body>
+    <header class="header">
+      <a class="brand" href="./" aria-label="SupaDesk trang chủ"
+        ><span class="logo" data-icon="layers"></span>SupaDesk<span
+          class="brand-label"
+          >SUPABASE WORKSPACE</span
+        ></a
+      >
+      <div class="header-right">
+        <span class="connection-state" id="connection-state"
+          ><i></i>Chưa kết nối</span
+        ><button id="connect-open" class="button dark">
+          <span data-icon="plug"></span>Kết nối Supabase</button
+        ><button id="disconnect" class="button hidden">Ngắt kết nối</button>
+      </div>
+    </header>
+    <div
+      id="deployment-notice"
+      class="deployment-notice hidden"
+      role="alert"
+    ></div>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-caption">
+          <span class="dot"></span>KHÔNG GIAN LÀM VIỆC
+        </div>
+        <label class="field project-field"
+          ><span>Dự án Supabase</span
+          ><select id="project" disabled>
+            <option value="">Kết nối để chọn dự án</option>
+          </select></label
+        >
+        <div class="sidebar-divider"></div>
+        <button id="mobile-tables" class="mobile-tables" aria-expanded="false">
+          <span data-icon="table"></span>Chọn bảng dữ liệu<span
+            data-icon="chevron"
+          ></span>
+        </button>
+        <div id="table-navigation" class="table-navigation">
+          <div class="nav-title">
+            <h2>Bảng dữ liệu</h2>
+            <button
+              id="catalog-refresh"
+              class="icon-button"
+              disabled
+              aria-label="Làm mới các bảng"
+              title="Làm mới các bảng"
+              data-icon="refresh"
+            ></button>
+          </div>
+          <label class="field schema-field"
+            ><span>Schema</span
+            ><select id="schema" disabled>
+              <option>public</option>
+            </select></label
+          ><label class="table-search"
+            ><span data-icon="search"></span
+            ><input
+              id="table-search"
+              placeholder="Tìm bảng…"
+              type="search"
+              disabled
+              aria-label="Tìm bảng"
+          /></label>
+          <div id="table-list" class="table-list">
+            <p class="sidebar-empty">
+              Các bảng của bạn sẽ xuất hiện ở đây sau khi kết nối.
+            </p>
+          </div>
+          <button id="table-create" class="button sidebar-new" disabled>
+            <span data-icon="plus"></span>Tạo bảng mới
+          </button>
+        </div>
+        <div class="sidebar-bottom">
+          <span class="mini-shield" data-icon="shield"></span>
+          <p>
+            Không gian quản trị riêng tư<span
+              >Kết nối được xử lý ở máy chủ.</span
+            >
+          </p>
+        </div>
+      </aside>
+      <main class="main">
+        <div class="main-heading">
+          <div>
+            <p class="eyebrow">MỌI THỨ Ở ĐÚNG CHỖ</p>
+            <h1>Không gian dữ liệu<span>.</span></h1>
+            <p>Xem rõ từng bảng. Chỉnh sửa gọn trong tay.</p>
+          </div>
+          <span class="workspace-badge"
+            ><span data-icon="database"></span>SUPABASE</span
+          >
+        </div>
+        <div class="access-toolbar">
+          <p id="access-summary">Cần backend để quản trị Supabase.</p>
+          <button id="access-open" class="button" disabled>
+            <span data-icon="shield"></span>Kiểm tra quyền
+          </button>
+        </div>
+        <div
+          id="notice"
+          class="notice hidden"
+          role="status"
+          aria-live="polite"
+        ></div>
+        <nav class="view-tabs" aria-label="Chức năng">
+          <button data-view="data" class="active" aria-current="page">
+            <span data-icon="table"></span>Dữ liệu bảng</button
+          ><button data-view="structure">
+            <span data-icon="columns"></span>Cấu trúc bảng</button
+          ><button data-view="sql">
+            <span data-icon="code"></span>SQL Editor<span class="tab-tag"
+              >SQL</span
+            >
+          </button>
+        </nav>
+        <section id="data-view" class="view">
+          <div class="panel">
+            <div class="panel-heading">
+              <div class="title-with-icon">
+                <span class="section-icon" data-icon="table"></span>
+                <div>
+                  <h2 id="table-title">Dữ liệu của bạn</h2>
+                  <p id="table-subtitle">Chọn một bảng để bắt đầu</p>
+                </div>
+              </div>
+              <div class="panel-actions">
+                <button
+                  id="rows-refresh"
+                  class="icon-button"
+                  disabled
+                  data-icon="refresh"
+                  aria-label="Làm mới dữ liệu"
+                  title="Làm mới dữ liệu"
+                ></button
+                ><button id="row-add" class="button dark" disabled>
+                  <span data-icon="plus"></span>Thêm dòng
+                </button>
+              </div>
+            </div>
+            <form id="filter-form" class="filter-toolbar">
+              <label
+                ><span class="sr-only">Cột lọc</span
+                ><select id="filter-column" disabled>
+                  <option value="">Chọn cột lọc</option>
+                </select></label
+              ><label
+                ><span class="sr-only">Điều kiện</span
+                ><select id="filter-operator" disabled>
+                  <option value="eq">Bằng</option>
+                  <option value="ilike">Chứa chữ</option>
+                  <option value="is_null">Là NULL</option>
+                </select></label
+              ><label class="filter-value"
+                ><span data-icon="search"></span
+                ><input
+                  id="filter-value"
+                  placeholder="Giá trị cần tìm…"
+                  disabled
+                  aria-label="Giá trị lọc" /></label
+              ><button id="filter-apply" class="button" disabled>Lọc</button
+              ><button
+                id="filter-clear"
+                class="text-button"
+                type="button"
+                disabled
+              >
+                Xoá lọc
+              </button>
+            </form>
+            <div id="data-area" class="data-area">
+              <div class="empty-state">
+                <div class="empty-illustration">
+                  <span data-icon="table"></span
+                  ><span class="illustration-chip" data-icon="check"></span>
+                </div>
+                <p class="eyebrow">DỮ LIỆU CỦA BẠN, KHÔNG GIAN CỦA BẠN</p>
+                <h3>Kết nối là bắt đầu.</h3>
+                <p>
+                  Đưa các bảng Supabase về một nơi gọn gàng.<br />Xem, sửa dữ
+                  liệu và chạy SQL ngay tại đây.
+                </p>
+                <button id="empty-connect" class="button dark">
+                  Kết nối Supabase<span data-icon="arrow"></span></button
+                ><span class="empty-note"
+                  ><span data-icon="lock"></span>Mã kết nối được mã hoá khi ghi
+                  nhớ</span
+                >
+              </div>
+            </div>
+            <div class="table-footer">
+              <span id="row-summary">Chưa có dữ liệu để hiển thị</span>
+              <div class="pagination">
+                <label
+                  >Số dòng
+                  <select id="page-size">
+                    <option>25</option>
+                    <option>50</option>
+                    <option>100</option>
+                  </select></label
+                ><button
+                  id="page-prev"
+                  class="icon-button"
+                  disabled
+                  aria-label="Trang trước"
+                  data-icon="left"
+                ></button
+                ><button
+                  id="page-next"
+                  class="icon-button"
+                  disabled
+                  aria-label="Trang tiếp theo"
+                  data-icon="chevron"
+                ></button>
+              </div>
+            </div>
+          </div>
+          <div class="under-panel">
+            <span data-icon="info"></span>
+            <p>
+              Chọn biểu tượng bút để sửa dòng. Bảng cần có khoá chính để sửa
+              hoặc xoá chính xác.
+            </p>
+          </div>
+        </section>
+        <section id="structure-view" class="view hidden">
+          <div class="panel">
+            <div class="panel-heading">
+              <div class="title-with-icon">
+                <span class="section-icon" data-icon="columns"></span>
+                <div>
+                  <h2 id="structure-title">Cấu trúc bảng</h2>
+                  <p>Kiểu dữ liệu, khoá chính và giá trị mặc định</p>
+                </div>
+              </div>
+              <button id="column-add" class="button dark" disabled>
+                <span data-icon="plus"></span>Thêm cột
+              </button>
+            </div>
+            <div id="structure-area" class="structure-area">
+              <div class="simple-empty">
+                Chọn bảng ở danh sách bên trái để xem cấu trúc.
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="sql-view" class="view hidden">
+          <div class="panel sql-panel">
+            <div class="panel-heading">
+              <div class="title-with-icon">
+                <span class="section-icon" data-icon="code"></span>
+                <div>
+                  <h2>SQL Editor</h2>
+                  <p id="sql-project">Chọn dự án trước khi chạy truy vấn</p>
+                </div>
+              </div>
+              <label class="readonly-toggle"
+                ><input id="sql-readonly" type="checkbox" checked /><span
+                  >Chỉ đọc</span
+                ><span data-icon="lock"></span
+              ></label>
+            </div>
+            <div class="sql-filebar">
+              <span class="sql-file"><i></i>truy-van.sql</span
+              ><button id="sql-reset" class="text-button">Truy vấn mẫu</button>
+            </div>
+            <div class="code-editor">
+              <div id="line-numbers" aria-hidden="true">1<br />2<br />3</div>
+              <textarea
+                id="sql-input"
+                aria-label="Mã SQL"
+                spellcheck="false"
+                autocapitalize="none"
+                autocorrect="off"
+                wrap="off"
+              >
+-- Chế độ Chỉ đọc đang bật.
+select current_database() as database,
+       now() as thoi_gian;</textarea>
+            </div>
+            <div class="sql-runbar">
+              <span id="sql-mode-note"
+                ><span data-icon="shield"></span>Vai trò supabase_read_only_user
+                · Không thay đổi dữ liệu.</span
+              ><button id="sql-run" class="button dark" disabled>
+                <span data-icon="play"></span>Chạy SQL<kbd>⌘ ↵</kbd>
+              </button>
+            </div>
+          </div>
+          <div class="panel results-panel">
+            <div class="results-heading">
+              <h3><span data-icon="rows"></span>Kết quả</h3>
+              <span id="sql-result-meta">Chưa chạy truy vấn</span
+              ><button id="sql-download" class="text-button" disabled>
+                <span data-icon="download"></span>Tải JSON
+              </button>
+            </div>
+            <div id="sql-results" class="sql-results">
+              <div class="simple-empty">
+                Kết quả truy vấn sẽ xuất hiện ở đây.
+              </div>
+            </div>
+          </div>
+          <p class="sql-footnote">
+            Chỉ đọc dùng vai trò supabase_read_only_user. Thao tác ghi dùng
+            quyền của Access Token và tài khoản Supabase; app không tự cấp
+            quyền. Tên bảng trong SQL nên có schema, ví dụ public.khach_hang.
+          </p>
+        </section>
+        <footer class="footer">
+          <span
+            ><strong>SupaDesk</strong> / Dữ liệu rõ ràng. Thao tác dễ
+            dàng.</span
+          ><button class="text-button" id="help-open">
+            <span data-icon="help"></span>Hướng dẫn kết nối
+          </button>
+        </footer>
+      </main>
+    </div>
+    <dialog id="connect-dialog">
+      <form id="connect-form">
+        <div class="dialog-top">
+          <span class="section-icon green" data-icon="plug"></span
+          ><button
+            class="icon-button"
+            type="button"
+            data-close="connect-dialog"
+            aria-label="Đóng"
+            data-icon="close"
+          ></button>
+        </div>
+        <p class="eyebrow">KẾT NỐI KHÔNG GIAN CỦA BẠN</p>
+        <h2>Bắt đầu với Supabase</h2>
+        <p class="dialog-description">
+          Dùng Personal Access Token của tài khoản Supabase để chọn dự án và
+          quản lý database.
+        </p>
+        <label class="field"
+          ><span>Supabase Access Token</span
+          ><input
+            id="access-token"
+            type="password"
+            required
+            placeholder="sbp_…"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false" /></label
+        ><label class="remember-option"
+          ><input id="remember" type="checkbox" checked /><span
+            ><strong>Nhớ kết nối trên thiết bị này</strong
+            ><small
+              >Ghi nhớ tối đa 30 ngày bằng cookie HttpOnly mã hoá; bỏ chọn để
+              dùng phiên tối đa 8 giờ. Dùng “Ngắt & quên kết nối” để xoá.</small
+            ></span
+          ></label
+        >
+        <details class="help-details">
+          <summary>Lấy mã kết nối ở đâu?</summary>
+          <ol>
+            <li>
+              Mở
+              <a
+                href="https://supabase.com/dashboard/account/tokens"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Supabase → Account → Access Tokens ↗</a
+              >.
+            </li>
+            <li>
+              Tạo token mới cho các dự án bạn muốn quản lý. Chọn đúng phạm vi dự
+              án, quyền xem dự án (projects:read) và Database Read/Write theo
+              nhu cầu. Vai trò tài khoản trong tổ chức cũng phải cho phép thao
+              tác đó.
+            </li>
+            <li>Sao chép token, dán vào ô ở trên rồi bấm Kết nối.</li>
+          </ol>
+          <p>
+            Đây là token tài khoản Supabase, khác với mã GitHub và khoá
+            <code>anon</code>/<code>service_role</code>. Dự án tạm dừng cần được
+            khởi động lại trong Supabase.
+          </p>
+          <a
+            href="https://supabase.com/docs/reference/api/v1-run-a-query"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Tài liệu Management API ↗</a
+          >
+        </details>
+        <div class="privacy-note">
+          <span data-icon="lock"></span>
+          <p>
+            Mã được gửi qua máy chủ của trang tới Supabase. JavaScript không đọc
+            được cookie kết nối đã mã hoá. Chỉ dùng trên thiết bị cá nhân và
+            không gửi mã qua chat.
+          </p>
+        </div>
+        <p id="connect-error" class="form-error" role="alert"></p>
+        <button id="connect-submit" class="button dark full-width">
+          Kết nối Supabase<span data-icon="arrow"></span>
+        </button>
+      </form>
+    </dialog>
+    <dialog id="row-dialog" class="wide-dialog">
+      <form id="row-form">
+        <div class="dialog-top">
+          <div>
+            <h2 id="row-dialog-title">Thêm dòng dữ liệu</h2>
+            <p id="row-dialog-context" class="dialog-context"></p>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            data-close="row-dialog"
+            aria-label="Đóng"
+            data-icon="close"
+          ></button>
+        </div>
+        <p class="dialog-description">
+          Chọn “Đặt giá trị” để nhập hoặc “NULL” để xoá giá trị. Các cột để mặc
+          định/giữ nguyên sẽ không được gửi.
+        </p>
+        <div id="row-fields" class="row-fields"></div>
+        <p id="row-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" class="button" data-close="row-dialog">
+            Huỷ</button
+          ><button id="row-submit" class="button dark">Lưu dòng dữ liệu</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="table-dialog" class="wide-dialog">
+      <form id="table-form">
+        <div class="dialog-top">
+          <div>
+            <h2>Tạo bảng mới</h2>
+            <p id="table-dialog-context" class="dialog-context"></p>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            data-close="table-dialog"
+            aria-label="Đóng"
+            data-icon="close"
+          ></button>
+        </div>
+        <label class="field"
+          ><span>Tên bảng</span
+          ><input
+            id="new-table-name"
+            required
+            placeholder="Ví dụ: khach_hang"
+            autocomplete="off"
+            maxlength="63"
+        /></label>
+        <div class="column-form-header">
+          <h3>Các cột</h3>
+          <button id="new-table-column" type="button" class="text-button">
+            <span data-icon="plus"></span>Thêm cột
+          </button>
+        </div>
+        <div id="new-table-columns" class="new-table-columns"></div>
+        <p class="form-hint">
+          Bảng mới bật Row Level Security (RLS). Dùng SQL để thêm policy phù hợp
+          trước khi cho ứng dụng truy cập.
+        </p>
+        <p id="table-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="button" type="button" data-close="table-dialog">
+            Huỷ</button
+          ><button id="table-submit" class="button dark">Tạo bảng</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="column-dialog">
+      <form id="column-form">
+        <div class="dialog-top">
+          <h2 id="column-dialog-title">Thêm cột</h2>
+          <button
+            class="icon-button"
+            type="button"
+            data-close="column-dialog"
+            aria-label="Đóng"
+            data-icon="close"
+          ></button>
+        </div>
+        <p id="column-dialog-context" class="dialog-context"></p>
+        <div id="column-fields"></div>
+        <p id="column-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="button" type="button" data-close="column-dialog">
+            Huỷ</button
+          ><button id="column-submit" class="button dark">Lưu thay đổi</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="confirm-dialog">
+      <div class="dialog-top">
+        <span class="section-icon" data-icon="info"></span
+        ><button
+          class="icon-button"
+          id="confirm-close"
+          aria-label="Đóng"
+          data-icon="close"
+        ></button>
+      </div>
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-description" class="dialog-description"></p>
+      <pre id="confirm-preview"></pre>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" class="button">Huỷ</button
+        ><button id="confirm-submit" class="button dark">Xác nhận</button>
+      </div>
+    </dialog>
+    <dialog id="access-dialog" class="wide-dialog">
+      <div class="dialog-top">
+        <div>
+          <h2>Quyền truy cập Supabase</h2>
+          <p id="access-context" class="dialog-context"></p>
+        </div>
+        <button
+          class="icon-button"
+          type="button"
+          data-close="access-dialog"
+          aria-label="Đóng"
+          data-icon="close"
+        ></button>
+      </div>
+      <p class="dialog-description">
+        Kiểm tra chỉ chạy SELECT, không tạo bảng hay thay đổi dữ liệu. Kết quả
+        ghi cho biết khả năng gọi API và quyền CREATE trên schema; từng bảng vẫn
+        có thể có quyền riêng.
+      </p>
+      <div id="access-results" class="access-results"></div>
+      <details class="help-details" open>
+        <summary>Cách khắc phục lỗi quyền</summary>
+        <ol>
+          <li>
+            Token GitHub và khoá anon/service_role không dùng được ở đây. Cần
+            <a
+              href="https://supabase.com/dashboard/account/tokens"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Supabase Personal Access Token</a
+            >.
+          </li>
+          <li>
+            Kiểm tra token được cấp đúng dự án, quyền xem dự án và Database
+            Read/Write. Nếu token chỉ có quyền đọc, tạo/cập nhật token phù hợp
+            rồi kết nối lại.
+          </li>
+          <li>
+            Nếu tổ chức chỉ cấp quyền Read-Only cho tài khoản, nhờ chủ dự án cấp
+            quyền cần thiết. Đổi nút trong app không làm tăng quyền tài khoản.
+          </li>
+          <li>
+            Muốn chạy CREATE/INSERT/UPDATE trong SQL Editor, tắt “Chỉ đọc” và
+            xác nhận đúng dự án trước khi chạy.
+          </li>
+          <li>
+            GitHub Pages không chạy backend. Triển khai cả repo lên Vercel hoặc
+            máy chủ Node.js, rồi mở địa chỉ mới để dùng app.
+          </li>
+        </ol>
+      </details>
+      <div class="dialog-actions">
+        <button id="access-refresh" class="button dark">Kiểm tra lại</button>
+      </div>
+    </dialog>
+    <noscript
+      ><p class="notice error">
+        Hãy bật JavaScript để sử dụng SupaDesk.
+      </p></noscript
+    >
+  </body>
+</html>
