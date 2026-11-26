@@ -1,0 +1,18 @@
+{
+  "name": "supadesk",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "HOST=0.0.0.0 node --env-file-if-exists=.env server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
+    "jsdom": "^26.1.0"
+  }
+}
