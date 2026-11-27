@@ -1,0 +1,22 @@
+{
+  "reukix": {
+    "repository": "https://github.com/Reukix/ukix",
+    "commit": "604469dbe830be5f93447cabd8c0943214f2b3af"
+  },
+  "maasea": {
+    "repository": "https://github.com/Maasea/sgmodule",
+    "commit": "65075cdb388fc5e3094afd7e7314c67b243f3525"
+  },
+  "local_changes": [
+    "Separate YouTube and iOS YouTube Music dispatch by User-Agent; guard HTTP status, body type/size, routes and completion.",
+    "Force YouTube captionLang=off; hide Shorts/create by default and retain Music Samples.",
+    "Preserve server bitrate/codec/quality assignments when merging Spotify configuration, and retain unspecified server flags.",
+    "Omit unsafe Spotify search byte-scanner and unverified player/ad_break/download-setting rewrites.",
+    "Bundle the pinned source files; no additional JavaScript download at runtime.",
+    "Select the YouTube decoder from the endpoint path without query values.",
+    "Bound outgoing request bodies; normalize unambiguous User-Agent headers and reject unrelated client identifiers.",
+    "Treat JSON null/array options as defaults instead of disabling processing.",
+    "Compact static Spotify data tables without an npm dependency; include the module in checksum coverage."
+  ],
+  "release": "2.1"
+}
