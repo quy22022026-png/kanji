@@ -1,9 +1,9 @@
 #!name=Media VI v2.1 - YouTube, YouTube Music, Spotify
 #!desc=An Shorts/nut tao; khong ep CC; Spotify dich loi VI. Khong cam ket mo khoa Premium. Can upload media-vi.js cung thu muc GitHub truoc khi cai.
 #!version=2026.11.27.3
-# Upload BOTH this module and media-vi.js to the ROOT of Gaucuto/loz.
+# Store both files in quy22022026-png/kanji, folder supadesk/ytbpre, branch main.
 # If using another repository, change ALL script-path URLs below.
-# The custom script URL is a deployment target, not a URL published by this chat.
+# media-vi.js at this public URL matched the verified v2.1 build on 2026-11-27.
 # Source credits and pinned commits are in sources.json in the download package.
 # Replace older YouTube/Spotify modules instead of enabling them together.
 # Use a private CA generated on your own device; no CA is bundled here.
@@ -19,12 +19,12 @@ DOMAIN,aet.spotify.com,REJECT
 http-request ^https:\/\/(?:[A-Za-z0-9-]+-)?spclient(?:\.wg)?\.spotify\.com(?::443)?\/(?:user-customization-service\/v1\/customize|nebula\/v1\/configuration\/attributes|remote-config-resolver\/v3\/configuration)\/?(?:\?[^#]*)?$ header-del if-none-match
 
 [Script]
-spotify.home = type=http-response,pattern=^https:\/\/(?:[A-Za-z0-9-]+-)?spclient(?:\.wg)?\.spotify\.com(?::443)?\/casita\/v1\/home\/default\/?(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=5,script-path=https://raw.githubusercontent.com/Gaucuto/loz/refs/heads/main/media-vi.js
-spotify.lyrics = type=http-response,pattern=^https:\/\/(?:[A-Za-z0-9-]+-)?spclient(?:\.wg)?\.spotify\.com(?::443)?\/(?:color-lyrics\/v2\/track\/[A-Za-z0-9]{22}(?:\/image\/[^/?#]+)?|scrollsita\/v[0-9]+\/scroll\/spotify:[^?#]+|metadata\/4\/track\/[a-fA-F0-9]{32}|extended-metadata\/v0\/extended-metadata|connect-state\/v1\/devices\/[^/?#]+)\/?(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=20,script-path=https://raw.githubusercontent.com/Gaucuto/loz/refs/heads/main/media-vi.js,argument=Lyrics=true&Translate=true&TargetLanguage=vi
-spotify.config = type=http-response,pattern=^https:\/\/(?:[A-Za-z0-9-]+-)?spclient(?:\.wg)?\.spotify\.com(?::443)?\/(?:bootstrap\/v1\/bootstrap|user-customization-service\/v1\/customize|nebula\/v1\/configuration\/attributes|remote-config-resolver\/v3\/configuration)\/?(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=5,script-path=https://raw.githubusercontent.com/Gaucuto/loz/refs/heads/main/media-vi.js
-youtube.response = type=http-response,pattern=^https:\/\/youtubei\.googleapis\.com(?::443)?\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|get_watch|log_event|config)(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=4194304,timeout=10,script-path=https://raw.githubusercontent.com/Gaucuto/loz/refs/heads/main/media-vi.js,argument="{"captionLang":"off","blockUpload":true,"blockShorts":true,"blockImmersive":false,"debug":false}"
-youtube.init = type=http-request,pattern=^https:\/\/[\w-]+\.googlevideo\.com(?::443)?\/initplayback\?,requires-body=true,binary-body-mode=true,max-size=4194304,timeout=10,script-path=https://raw.githubusercontent.com/Gaucuto/loz/refs/heads/main/media-vi.js
-youtube.log = type=http-request,pattern=^https:\/\/youtubei\.googleapis\.com(?::443)?\/youtubei\/v1\/log_event(?:\?|$),requires-body=true,binary-body-mode=true,max-size=4194304,timeout=10,script-path=https://raw.githubusercontent.com/Gaucuto/loz/refs/heads/main/media-vi.js
+spotify.home = type=http-response,pattern=^https:\/\/(?:[A-Za-z0-9-]+-)?spclient(?:\.wg)?\.spotify\.com(?::443)?\/casita\/v1\/home\/default\/?(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=5,script-path=https://raw.githubusercontent.com/quy22022026-png/kanji/refs/heads/main/supadesk/ytbpre/media-vi.js
+spotify.lyrics = type=http-response,pattern=^https:\/\/(?:[A-Za-z0-9-]+-)?spclient(?:\.wg)?\.spotify\.com(?::443)?\/(?:color-lyrics\/v2\/track\/[A-Za-z0-9]{22}(?:\/image\/[^/?#]+)?|scrollsita\/v[0-9]+\/scroll\/spotify:[^?#]+|metadata\/4\/track\/[a-fA-F0-9]{32}|extended-metadata\/v0\/extended-metadata|connect-state\/v1\/devices\/[^/?#]+)\/?(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=20,script-path=https://raw.githubusercontent.com/quy22022026-png/kanji/refs/heads/main/supadesk/ytbpre/media-vi.js,argument=Lyrics=true&Translate=true&TargetLanguage=vi
+spotify.config = type=http-response,pattern=^https:\/\/(?:[A-Za-z0-9-]+-)?spclient(?:\.wg)?\.spotify\.com(?::443)?\/(?:bootstrap\/v1\/bootstrap|user-customization-service\/v1\/customize|nebula\/v1\/configuration\/attributes|remote-config-resolver\/v3\/configuration)\/?(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=5,script-path=https://raw.githubusercontent.com/quy22022026-png/kanji/refs/heads/main/supadesk/ytbpre/media-vi.js
+youtube.response = type=http-response,pattern=^https:\/\/youtubei\.googleapis\.com(?::443)?\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|get_watch|log_event|config)(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=4194304,timeout=10,script-path=https://raw.githubusercontent.com/quy22022026-png/kanji/refs/heads/main/supadesk/ytbpre/media-vi.js,argument="{"captionLang":"off","blockUpload":true,"blockShorts":true,"blockImmersive":false,"debug":false}"
+youtube.init = type=http-request,pattern=^https:\/\/[\w-]+\.googlevideo\.com(?::443)?\/initplayback\?,requires-body=true,binary-body-mode=true,max-size=4194304,timeout=10,script-path=https://raw.githubusercontent.com/quy22022026-png/kanji/refs/heads/main/supadesk/ytbpre/media-vi.js
+youtube.log = type=http-request,pattern=^https:\/\/youtubei\.googleapis\.com(?::443)?\/youtubei\/v1\/log_event(?:\?|$),requires-body=true,binary-body-mode=true,max-size=4194304,timeout=10,script-path=https://raw.githubusercontent.com/quy22022026-png/kanji/refs/heads/main/supadesk/ytbpre/media-vi.js
 
 [MITM]
 hostname = %APPEND% spclient.wg.spotify.com,spclient.spotify.com,*-spclient.spotify.com,*-spclient.wg.spotify.com,*.googlevideo.com,youtubei.googleapis.com
